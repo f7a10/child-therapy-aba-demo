@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MAX_JSON_BYTES = 1024 * 1024
 MAX_CONTEXT_JSON_BYTES = 20 * 1024 * 1024
+VALIDATION_PATHS = ('/api/context/validate', '/api/posture/validate', '/api/channel/validate')
 
 
 def strict_object(pairs):
@@ -60,7 +61,7 @@ class Handler(BaseHTTPRequestHandler):
             # the connection before the client receives the 415 response.
             try:
                 rejected_size = int(self.headers.get('Content-Length', '-1'))
-                body_limit = (MAX_CONTEXT_JSON_BYTES if self.path == '/api/context/validate'
+                body_limit = (MAX_CONTEXT_JSON_BYTES if self.path in VALIDATION_PATHS
                               else MAX_JSON_BYTES)
                 if 0 <= rejected_size <= body_limit:
                     self.connection.settimeout(5)
@@ -73,7 +74,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.headers.get('Transfer-Encoding'):
                 raise ValueError('Transfer encoding is unsupported')
             size = int(self.headers.get('Content-Length', '-1'))
-            body_limit = (MAX_CONTEXT_JSON_BYTES if self.path == '/api/context/validate'
+            body_limit = (MAX_CONTEXT_JSON_BYTES if self.path in VALIDATION_PATHS
                           else MAX_JSON_BYTES)
             if size > body_limit:
                 self.send_json(413, {'error': 'JSON exceeds request size limit'})
@@ -90,13 +91,22 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, UnicodeError, TimeoutError, RecursionError) as exc:
             self.send_json(400, {'error': str(exc)})
             return
-        if self.path == '/api/context/validate':
+        if self.path in VALIDATION_PATHS:
             try:
                 duration = float(self.headers.get('X-ABA-Source-Duration', ''))
                 if not math.isfinite(duration) or duration <= 0:
                     raise ValueError('X-ABA-Source-Duration must be finite positive seconds')
-                from .context_schema import validate_context_document
-                validate_context_document(payload, duration)
+                if self.path == '/api/channel/validate':
+                    from .channel_events import reading_for_document
+                    reading = reading_for_document(payload, duration)
+                    self.send_json(200, {'status': 'valid', **reading})
+                    return
+                if self.path == '/api/context/validate':
+                    from .context_schema import validate_context_document
+                    validate_context_document(payload, duration)
+                else:
+                    from .posture_schema import validate_posture_document
+                    validate_posture_document(payload, duration)
             except (ValueError, TypeError) as exc:
                 self.send_json(400, {'error': str(exc)})
                 return
