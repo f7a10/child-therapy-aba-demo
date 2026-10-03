@@ -165,7 +165,9 @@ class SessionManager:
         if len(self._runners) >= self.max_sessions:
             raise CapacityExceeded("Too many active sessions; stop one first")
         source, provider, recorder = scenario.build()
-        runner = SessionRunner(LiveSession(source, provider, recorder, clock=self.clock), scenario,
+        moments = scenario.build_moments() if hasattr(scenario, 'build_moments') else None
+        runner = SessionRunner(LiveSession(source, provider, recorder, clock=self.clock,
+                                           moments=moments), scenario,
                                tick_hz=self.tick_hz)
         self._runners[runner.id] = runner
         runner.start_background()

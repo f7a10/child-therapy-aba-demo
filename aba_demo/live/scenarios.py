@@ -6,10 +6,13 @@ output, or examples of real child behavior. ``ReplayScenario`` replays an
 existing precomputed export against its matching local video (file-as-live).
 """
 from dataclasses import dataclass, field
+import json
 from pathlib import Path
 
 from ..engine import INDICATORS
 from ..export import file_sha256
+from ..channel_events import DOCUMENT_KINDS
+from .moments import MomentFeed
 from .providers import PrecomputedProvider, SyntheticProvider
 from .recorder import FrameLedgerRecorder
 from .source import FileAsLiveSource, SyntheticFrameSource
@@ -52,19 +55,35 @@ class ReplayScenario:
     id = "precomputed-replay"
     kind = "precomputed"
 
-    def __init__(self, video, observations):
+    def __init__(self, video, observations, channels=()):
         self.video = Path(video)
         self.observations = Path(observations)
         digest = file_sha256(self.video)
         # Validate once at startup so a mismatched pair fails fast.
         provider = PrecomputedProvider.from_file(self.observations, video_sha256=digest)
         self._digest = digest
+        self._tracking = file_sha256(self.observations)
+        self._channels = {}
+        for path in channels:
+            document = json.loads(Path(path).read_text(encoding='utf-8'))
+            name = DOCUMENT_KINDS.get(document.get('kind') if isinstance(document, dict) else None)
+            if name is None or name in self._channels:
+                raise ValueError('unknown_or_repeated_channel')
+            self._channels[name] = document
         self._source_info = provider.source
+        self.build_moments()  # fails fast unless every channel matches this video and tracking
         self.title = "Precomputed replay"
 
     def build(self):
         provider = PrecomputedProvider.from_file(self.observations, video_sha256=self._digest)
         return FileAsLiveSource(self.video), provider, FrameLedgerRecorder()
+
+    def build_moments(self):
+        """A fresh channel-event feed for one session, or None without channel files."""
+        if not self._channels:
+            return None
+        return MomentFeed(self._channels, self._source_info.get('duration'),
+                          source_sha256=self._digest, tracking_sha256=self._tracking)
 
     def describe(self) -> dict:
         duration = self._source_info.get("duration")
@@ -73,7 +92,8 @@ class ReplayScenario:
                             "matching video (SHA-256 verified). Earlier analysis, not live inference."),
                 "duration_s": round(duration) if isinstance(duration, (int, float)) else None,
                 "fps": self._source_info.get("fps"),
-                "exercises": ["file-as-live source", "precomputed provider", "source hash binding"]}
+                "exercises": ["file-as-live source", "precomputed provider", "source hash binding"],
+                "channels": sorted(self._channels)}
 
 
 SCENARIOS = {scenario.id: scenario for scenario in (

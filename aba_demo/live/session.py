@@ -44,13 +44,17 @@ def _percentile(values, fraction):
 
 class LiveSession:
     def __init__(self, source, provider, recorder=None, clock=_time.monotonic, session_id=None,
-                 engine_config=None, stale_after_s=1.0, performance_interval_s=1.0):
+                 engine_config=None, stale_after_s=1.0, performance_interval_s=1.0, moments=None):
         self.source = source
         self.provider = provider
         self.recorder = recorder or FrameLedgerRecorder()
         self.clock = clock
         self.session_id = session_id or "session-" + uuid.uuid4().hex[:12]
         self.engine = Engine(engine_config)
+        # Optional observation-channel events (MomentFeed), released when confirmed.
+        self.moments = moments
+        if moments is not None:
+            moments.set_activity(self.engine.activity, 0.0)
         self.stale_after_s = stale_after_s
         self.performance_interval_s = performance_interval_s
         self.state = "created"
@@ -80,6 +84,7 @@ class LiveSession:
                 "termination_reason": self.termination_reason,
                 "provider_errors": self.provider_errors,
                 "stale_observations": self.stale_observations,
+                "channels": [] if self.moments is None else list(self.moments.channels),
                 "last_sequence": self._sequence}
 
     # Events -----------------------------------------------------------------
@@ -165,6 +170,8 @@ class LiveSession:
         if self.state not in ("target_selected", "running", "paused"):
             raise InvalidTransition(f"Cannot change activity while {self.state}")
         self.engine.set_activity(activity)
+        if self.moments is not None:
+            self.moments.set_activity(self.engine.activity, self.last_video_time)
         self._emit("activity", activity=self.engine.activity, video_time=self.last_video_time)
 
     def _fail(self, reason, detail):
@@ -263,6 +270,9 @@ class LiveSession:
                        captured_monotonic_ms=captured_ms, processed_monotonic_ms=processed_ms,
                        age_s=age_s, stale=stale, observation=row)
             self._emit("engine_state", video_time=row["time"], stale=stale, state=snapshot)
+        if self.moments is not None:
+            for entry in self.moments.due(frame.video_time):
+                self._emit("channel_event", video_time=frame.video_time, entry=entry)
         self._record_performance(frame, started, ages)
 
     def _record_performance(self, frame, started, ages):
