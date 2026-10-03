@@ -9,12 +9,15 @@ import { Card, SectionTitle, cx } from "./ui";
  * the session timeline and as one line per moment. Context notes are labeled as
  * model suggestions. Only events already released by the server are shown.
  */
-export function SessionStrip({ entries, duration, videoTime, onWatch }: {
+export function SessionStrip({ entries, duration, videoTime, onWatch, hideBar = false, title }: {
   entries: ChannelEntry[];
   duration: number | null;
   videoTime: number | null;
   /** Review mode only: jump the recorded video to a moment. */
   onWatch?: (time: number) => void;
+  /** The review page draws its own timeline above, so the bar can be left out. */
+  hideBar?: boolean;
+  title?: string;
 }) {
   const { s } = useI18n();
   const groups = groupEntries(entries);
@@ -23,11 +26,11 @@ export function SessionStrip({ entries, duration, videoTime, onWatch }: {
   return (
     <Card aria-labelledby="strip-title">
       <SectionTitle id="strip-title" action={<span className="text-xs text-faint tabular">{groups.length}</span>}>
-        {s.strip.title}
+        {title ?? s.strip.title}
       </SectionTitle>
       <div className="px-5 pb-5">
         {/* Session time always runs left to right, whatever the reading direction. */}
-        <div className="relative h-8 rounded-lg border border-line bg-surface-2" dir="ltr" aria-hidden>
+        {!hideBar && <div className="relative h-8 rounded-lg border border-line bg-surface-2" dir="ltr" aria-hidden>
           {groups.map((group) => (
             <span
               key={group.entries[0]?.entry_id}
@@ -36,12 +39,12 @@ export function SessionStrip({ entries, duration, videoTime, onWatch }: {
             />
           ))}
           {videoTime !== null && <span className="absolute top-0 bottom-0 w-0.5 bg-ink" style={{ left: position(videoTime) }} />}
-        </div>
+        </div>}
         {groups.length === 0 ? (
-          <p className="mt-3 text-sm text-faint">{s.strip.empty}</p>
+          <p className="mt-3 text-sm text-faint">{hideBar ? s.strip.emptyReview : s.strip.empty}</p>
         ) : (
-          <ol className="scrollbar-thin mt-3 max-h-[300px] divide-y divide-line overflow-y-auto">
-            {[...groups].reverse().map((group) => {
+          <ol className="scrollbar-thin mt-3 max-h-[420px] divide-y divide-line overflow-y-auto">
+            {(hideBar ? groups : [...groups].reverse()).map((group) => {
               const measured = group.entries.filter((e) => e.origin !== "suggested");
               const notes = [...new Set(group.entries.filter((e) => e.origin === "suggested")
                 .map((e) => contextDetails(e.details, s)).filter(Boolean))];

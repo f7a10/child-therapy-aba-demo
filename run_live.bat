@@ -1,8 +1,9 @@
 @echo off
-rem Double-click to start the live-session app; close this window to stop it.
-rem Extra arguments are passed through, e.g. a recorded-session replay:
-rem   run_live.bat --replay-video VIDEO.mp4 --replay-observations observations.pending.json ^
-rem                --replay-channel posture.pending.json --replay-channel large_movement.pending.json
+rem Double-click to start the ABA visual assistant; close this window to stop it.
+rem Analysed sessions are kept in a library folder outside the repository
+rem (default: %USERPROFILE%\ABA Visual Assistant\sessions). Extra arguments pass through, e.g.
+rem   run_live.bat --library "D:\ABA sessions"
+rem   run_live.bat --with-simulations      (engineering tests of the live-session shell)
 cd /d "%~dp0"
 set PYTHONPATH=
 set PYTHONHOME=

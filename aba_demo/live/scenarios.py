@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import re
 
+from ..activities import ACTIVITIES
 from ..engine import INDICATORS
 from ..export import file_sha256
 from ..channel_events import DOCUMENT_KINDS
@@ -56,9 +57,15 @@ class ReplayScenario:
     id = "precomputed-replay"
     kind = "precomputed"
 
-    def __init__(self, video, observations, channels=(), *, scenario_id=None, title=None):
+    def __init__(self, video, observations, channels=(), *, scenario_id=None, title=None,
+                 activity="table", created=None, skipped=None):
         if scenario_id is not None:
             self.id = scenario_id
+        if activity not in ACTIVITIES:
+            raise ValueError("invalid_activity")
+        self.activity = activity
+        self.created = created
+        self.skipped = dict(skipped or {})
         self.video = Path(video)
         self.observations = Path(observations)
         digest = file_sha256(self.video)
@@ -67,12 +74,14 @@ class ReplayScenario:
         self._digest = digest
         self._tracking = file_sha256(self.observations)
         self._channels = {}
+        self._channel_files = {}
         for path in channels:
             document = json.loads(Path(path).read_text(encoding='utf-8'))
             name = DOCUMENT_KINDS.get(document.get('kind') if isinstance(document, dict) else None)
             if name is None or name in self._channels:
                 raise ValueError('unknown_or_repeated_channel')
             self._channels[name] = document
+            self._channel_files[name] = Path(path)
         self._source_info = provider.source
         self.build_moments()  # fails fast unless every channel matches this video and tracking
         self.title = title or "Precomputed replay"
@@ -105,6 +114,14 @@ class ReplayScenario:
 
 MANIFEST_NAME = "session.json"
 MANIFEST_KEYS = frozenset({"title", "video", "observations", "channels"})
+# Written by the in-app analysis: the therapist's activity, when, and channels not produced.
+MANIFEST_OPTIONAL_KEYS = frozenset({"activity", "created", "skipped"})
+
+
+def session_id_for(folder):
+    """Stable id of a library session, from its folder name."""
+    slug = re.sub(r"[^a-z0-9]+", "-", Path(folder).name.lower()).strip("-") or "session"
+    return f"recorded-{slug}"
 
 
 def load_session_library(root):
@@ -122,15 +139,21 @@ def load_session_library(root):
     for folder in sorted(path for path in root.iterdir() if (path / MANIFEST_NAME).is_file()):
         try:
             manifest = json.loads((folder / MANIFEST_NAME).read_text(encoding="utf-8"))
-            if (not isinstance(manifest, dict) or set(manifest) != MANIFEST_KEYS
+            if (not isinstance(manifest, dict) or not MANIFEST_KEYS <= set(manifest)
+                    or not set(manifest) <= MANIFEST_KEYS | MANIFEST_OPTIONAL_KEYS
                     or not isinstance(manifest["title"], str) or not 1 <= len(manifest["title"]) <= 120
-                    or not isinstance(manifest["channels"], list)):
+                    or not isinstance(manifest["channels"], list)
+                    or not isinstance(manifest.get("created", ""), str)
+                    or not isinstance(manifest.get("skipped", {}), dict)
+                    or not all(isinstance(k, str) and isinstance(v, str)
+                               for k, v in manifest.get("skipped", {}).items())):
                 raise ValueError("invalid_session_manifest")
-            slug = re.sub(r"[^a-z0-9]+", "-", folder.name.lower()).strip("-") or "session"
             sessions.append(ReplayScenario(
                 folder / manifest["video"], folder / manifest["observations"],
                 channels=[folder / name for name in manifest["channels"]],
-                scenario_id=f"recorded-{slug}", title=manifest["title"]))
+                scenario_id=session_id_for(folder), title=manifest["title"],
+                activity=manifest.get("activity", "table"), created=manifest.get("created"),
+                skipped=manifest.get("skipped")))
         except (OSError, ValueError, TypeError, KeyError) as error:
             raise ValueError(f"Recorded session '{folder.name}': {error}") from None
     return sessions

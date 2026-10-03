@@ -1,4 +1,4 @@
-import type { Activity, Command, Scenario, SessionSnapshot } from "./types";
+import type { Activity, AnalysisStatus, Command, LibrarySession, ReviewPayload, Scenario, SessionSnapshot } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -33,6 +33,54 @@ export const api = {
     request<SessionSnapshot>(`/api/live/sessions/${encodeURIComponent(sessionId)}/commands`, {
       method: "POST",
       body: JSON.stringify(activity ? { command, activity } : { command }),
+    }),
+};
+
+const analysisPath = (id: string, action = "") => `/api/analyses/${encodeURIComponent(id)}${action}`;
+
+export const library = {
+  list: () => request<{ sessions: LibrarySession[]; analysis: boolean }>("/api/library"),
+  review: (id: string) => request<ReviewPayload>(`/api/library/${encodeURIComponent(id)}`),
+  videoUrl: (id: string) => `/api/library/${encodeURIComponent(id)}/video`,
+};
+
+export interface Selection {
+  x: number;
+  y: number;
+  activity?: Activity;
+  task_region?: [number, number, number, number] | null;
+  title?: string;
+}
+
+export const analysis = {
+  current: () => request<{ analysis: AnalysisStatus | null }>("/api/analyses/current").then((r) => r.analysis),
+  status: (id: string) => request<AnalysisStatus>(analysisPath(id)),
+  frameUrl: (id: string, version: number) => `${analysisPath(id, "/frame")}?v=${version}`,
+  select: (id: string, selection: Selection) =>
+    request<AnalysisStatus>(analysisPath(id, "/select"), { method: "POST", body: JSON.stringify(selection) }),
+  skip: (id: string) => request<AnalysisStatus>(analysisPath(id, "/skip"), { method: "POST" }),
+  continueWithout: (id: string) => request<AnalysisStatus>(analysisPath(id, "/continue"), { method: "POST" }),
+  discard: (id: string) => fetch(analysisPath(id), { method: "DELETE" }).then(() => undefined),
+  /** Streams the file to the local server (loopback only), reporting upload progress 0..1. */
+  upload: (file: File, onProgress: (fraction: number) => void) =>
+    new Promise<AnalysisStatus>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/analyses");
+      xhr.setRequestHeader("Content-Type", "application/octet-stream");
+      xhr.setRequestHeader("X-Filename", encodeURIComponent(file.name));
+      xhr.upload.onprogress = (event) => event.lengthComputable && onProgress(event.loaded / event.total);
+      xhr.onload = () => {
+        let body: { error?: string } = {};
+        try {
+          body = JSON.parse(xhr.responseText);
+        } catch {
+          // fall through to the generic error
+        }
+        if (xhr.status >= 200 && xhr.status < 300) resolve(body as AnalysisStatus);
+        else reject(new ApiError(xhr.status, typeof body.error === "string" ? body.error : `upload_failed_${xhr.status}`));
+      };
+      xhr.onerror = () => reject(new ApiError(0, "server_down"));
+      xhr.send(file);
     }),
 };
 

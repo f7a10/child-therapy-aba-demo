@@ -13,3 +13,9 @@ export function formatDuration(seconds: number): string {
   return `${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s`;
 }
 
+
+/** A length as m:ss (e.g. 2:48), for durations shown next to each other. */
+export function formatLength(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}

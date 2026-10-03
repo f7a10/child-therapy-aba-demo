@@ -180,3 +180,83 @@ export interface StreamReady {
   history_start: number;
   after: number;
 }
+
+/** An analysed session in the library (GET /api/library). */
+export interface LibrarySession {
+  id: string;
+  title: string;
+  activity: Activity;
+  created: string | null;
+  duration: number;
+  channels: ChannelName[];
+  moments: number;
+  flags: number;
+}
+
+/** One timeline entry of an analysed session (aba_demo/session_timeline.py). */
+export interface ReviewEntry {
+  entry_id: string;
+  channel: ChannelName;
+  source_event_id: string;
+  kind: string;
+  origin: "measured" | "suggested";
+  start_time: number;
+  end_time: number;
+  detected_time: number;
+  evidence_times: number[];
+  activity: Activity;
+  level: "flag" | "info";
+  clinician_confirmation: string;
+  details: Record<string, string>;
+}
+
+/** [start, end, state] runs of a measured state, e.g. sitting / standing. */
+export type Band = [number, number, string];
+
+export interface ChannelSummary {
+  coverage?: number;
+  bands?: Band[];
+  moments?: number;
+  read?: number;
+}
+
+/** The whole analysed session for review (GET /api/library/{id}). */
+export interface ReviewPayload {
+  id: string;
+  title: string;
+  activity: Activity;
+  created: string | null;
+  duration: number;
+  decoded_seconds: number;
+  child_confirmed_fraction: number | null;
+  channels: ChannelName[];
+  skipped: Partial<Record<ChannelName, string>>;
+  summary: Partial<Record<ChannelName, ChannelSummary>>;
+  entries: ReviewEntry[];
+}
+
+export type AnalysisState = "preparing" | "select" | "running" | "reselect" | "done" | "failed" | "cancelled";
+export type AnalysisStageName = "tracking" | "posture" | "movement" | "orientation" | "context";
+export type StageStatus = "pending" | "running" | "done" | "skipped" | "failed";
+
+export interface FrameBox {
+  id: number;
+  /** Normalized [x1, y1, x2, y2]. */
+  xyxy: [number, number, number, number];
+}
+
+/** One in-app analysis of a new video (GET /api/analyses/{id}). */
+export interface AnalysisStatus {
+  id: string;
+  title: string;
+  state: AnalysisState;
+  stage: AnalysisStageName | null;
+  progress: { done: number; total: number } | null;
+  error: string | null;
+  frame: { version: number; time: number; width: number; height: number; boxes: FrameBox[] } | null;
+  reselections: number;
+  max_reselections: number;
+  stages: { name: AnalysisStageName; status: StageStatus; note: string | null }[];
+  session_id: string | null;
+  child_confirmed_fraction: number | null;
+}

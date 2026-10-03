@@ -22,9 +22,10 @@ export function BrandMark({ className }: { className?: string }) {
   );
 }
 
-export function TopBar({ connection, sessionId, onHome, providerKind }: {
+export function TopBar({ connection, sessionId, canGoHome, onHome, providerKind }: {
   connection: Connection;
   sessionId: string | null;
+  canGoHome: boolean;
   onHome: () => void;
   providerKind: ProviderKind | null;
 }) {
@@ -42,7 +43,7 @@ export function TopBar({ connection, sessionId, onHome, providerKind }: {
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-bg/80 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-4 px-5 lg:px-8">
-        {sessionId ? (
+        {canGoHome ? (
           <button
             onClick={onHome}
             className="-ms-2 flex items-center gap-3 rounded-xl px-2 py-1 transition-colors hover:bg-surface-2"
@@ -66,10 +67,12 @@ export function TopBar({ connection, sessionId, onHome, providerKind }: {
 
         <div className="ms-auto flex items-center gap-4 text-xs text-muted">
           {sessionId && <span className="hidden font-mono md:inline">{sessionId}</span>}
-          <span className="inline-flex items-center gap-2" role="status" aria-live="polite">
-            <span className={cx("size-2 rounded-full", CONNECTION_DOT[connection])} aria-hidden />
-            {s.topbar.connection[connection]}
-          </span>
+          {sessionId && (
+            <span className="inline-flex items-center gap-2" role="status" aria-live="polite">
+              <span className={cx("size-2 rounded-full", CONNECTION_DOT[connection])} aria-hidden />
+              {s.topbar.connection[connection]}
+            </span>
+          )}
           <button
             onClick={toggle}
             aria-label={s.topbar.switchLabel}

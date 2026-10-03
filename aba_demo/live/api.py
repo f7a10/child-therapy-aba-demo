@@ -9,11 +9,12 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from .analysis import MAX_UPLOAD_BYTES
 from .runtime import (COMMANDS, CapacityExceeded, InvalidTransition, SessionManager,
                       SessionNotFound, SubscriberOverflow)
 
@@ -30,6 +31,15 @@ class CreateSession(BaseModel):
     scenario: str = Field(min_length=1, max_length=64)
 
 
+class Selection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    activity: Literal["table", "movement", "break"] | None = None
+    task_region: list[float] | None = Field(default=None, min_length=4, max_length=4)
+    title: str | None = Field(default=None, max_length=120)
+
+
 class SessionCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     command: Literal[COMMANDS]
@@ -41,7 +51,7 @@ def _error(code: int, message: str) -> JSONResponse:
 
 
 def create_app(manager: SessionManager | None = None, port: int = DEFAULT_PORT,
-               dev_origins=(), ui_dist: Path = UI_DIST) -> FastAPI:
+               dev_origins=(), ui_dist: Path = UI_DIST, library=None, analyses=None) -> FastAPI:
     manager = manager or SessionManager()
     allowed_origins = {f"http://127.0.0.1:{port}", f"http://localhost:{port}", *dev_origins}
 
@@ -49,6 +59,8 @@ def create_app(manager: SessionManager | None = None, port: int = DEFAULT_PORT,
     async def lifespan(_app):
         yield
         await manager.shutdown()
+        if analyses is not None:
+            await asyncio.to_thread(analyses.shutdown)
 
     app = FastAPI(title="ABA Live Session Shell — simulation", version="0.1.0",
                   lifespan=lifespan, docs_url="/api/live/docs", redoc_url=None,
@@ -133,6 +145,113 @@ def create_app(manager: SessionManager | None = None, port: int = DEFAULT_PORT,
         if video_path is None:
             return _error(404, "This session has no video")
         return FileResponse(video_path(), headers={"Cache-Control": "no-store"})
+
+    # ----- analysed-session library (review after the session) -----
+
+    def _library():
+        if library is None:
+            raise SessionNotFound("library")
+        return library
+
+    def _job(job_id):
+        if analyses is None:
+            raise SessionNotFound("analysis")
+        try:
+            return analyses.get(job_id)
+        except KeyError:
+            raise SessionNotFound(job_id) from None
+
+    @app.get("/api/library")
+    async def library_list():
+        if library is None:
+            return {"sessions": [], "analysis": False}
+        return {"sessions": await asyncio.to_thread(library.list), "analysis": analyses is not None}
+
+    @app.get("/api/library/{session_id}")
+    async def library_review(session_id: str):
+        try:
+            return await asyncio.to_thread(_library().review, session_id)
+        except KeyError:
+            raise SessionNotFound(session_id) from None
+
+    @app.get("/api/library/{session_id}/video")
+    async def library_video(session_id: str):
+        try:
+            video = _library().get(session_id).video_path()
+        except KeyError:
+            raise SessionNotFound(session_id) from None
+        return FileResponse(video, headers={"Cache-Control": "no-store"})
+
+    # ----- in-app analysis of a new video -----
+
+    @app.get("/api/analyses/current")
+    async def analysis_current():
+        return {"analysis": None if analyses is None else analyses.current()}
+
+    @app.post("/api/analyses", status_code=status.HTTP_201_CREATED)
+    async def analysis_upload(request: Request):
+        if analyses is None:
+            return _error(404, "Analysis is not available")
+        from urllib.parse import unquote
+
+        try:
+            folder, video, title = analyses.begin_upload(unquote(request.headers.get("x-filename", "")))
+        except RuntimeError as exc:
+            return _error(409, str(exc))
+        size = 0
+        try:
+            with video.open("wb") as handle:
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > MAX_UPLOAD_BYTES:
+                        raise ValueError("video_too_large")
+                    handle.write(chunk)
+            if size == 0:
+                raise ValueError("empty_upload")
+            job = analyses.create(folder, video, title)
+        except BaseException as exc:
+            import shutil
+
+            shutil.rmtree(folder, ignore_errors=True)
+            if isinstance(exc, RuntimeError):
+                return _error(409, str(exc))
+            raise
+        return job.status()
+
+    @app.get("/api/analyses/{job_id}")
+    async def analysis_status(job_id: str):
+        return _job(job_id).status()
+
+    @app.get("/api/analyses/{job_id}/frame")
+    async def analysis_frame(job_id: str):
+        image = _job(job_id).jpeg()
+        if image is None:
+            return _error(404, "No frame to show")
+        return Response(image, media_type="image/jpeg")
+
+    @app.post("/api/analyses/{job_id}/select")
+    async def analysis_select(job_id: str, body: Selection):
+        job = _job(job_id)
+        job.select(body.x, body.y, activity=body.activity, task_region=body.task_region,
+                   title=body.title)
+        return job.status()
+
+    @app.post("/api/analyses/{job_id}/skip")
+    async def analysis_skip(job_id: str):
+        job = _job(job_id)
+        job.skip()
+        return job.status()
+
+    @app.post("/api/analyses/{job_id}/continue")
+    async def analysis_continue(job_id: str):
+        job = _job(job_id)
+        job.continue_without()
+        return job.status()
+
+    @app.delete("/api/analyses/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+    async def analysis_discard(job_id: str):
+        _job(job_id)
+        await asyncio.to_thread(analyses.discard, job_id)
 
     @app.websocket("/api/live/sessions/{session_id}/events")
     async def events(websocket: WebSocket, session_id: str, after: int = Query(0, ge=0)):
