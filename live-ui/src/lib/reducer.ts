@@ -1,4 +1,4 @@
-import { ACTIVITY_LABEL, CHANNEL_KIND_LABEL, ERROR_LABEL, SESSION_STATE_LABEL, TERMINATION_LABEL, titleCase } from "./format";
+import type { TimelineLabel } from "./i18n";
 import type {
   Activity,
   ChannelEntry,
@@ -21,8 +21,8 @@ export interface TimelineItem {
   sequence: number;
   kind: "state" | "identity" | "alert" | "error" | "activity";
   videoTime: number | null;
-  title: string;
-  detail?: string;
+  /** Rendered in the current language by i18n.timelineText. */
+  label: TimelineLabel;
   tone: Tone;
   repeat: number;
   code?: string;
@@ -112,7 +112,6 @@ function applyEvent(state: LiveState, event: LiveEvent): LiveState {
   switch (event.event_type) {
     case "session_state": {
       const terminal = TERMINAL.includes(event.state);
-      const reason = event.reason ? TERMINATION_LABEL[event.reason] ?? titleCase(event.reason) : undefined;
       return {
         ...next,
         sessionState: event.state,
@@ -123,8 +122,7 @@ function applyEvent(state: LiveState, event: LiveEvent): LiveState {
           sequence: event.sequence,
           kind: "state",
           videoTime: next.videoTime,
-          title: SESSION_STATE_LABEL[event.state],
-          detail: reason,
+          label: { type: "state", state: event.state, reason: event.reason },
           tone: event.state === "failed" ? "critical" : event.state === "running" ? "positive" : "neutral",
         }),
       };
@@ -139,8 +137,7 @@ function applyEvent(state: LiveState, event: LiveEvent): LiveState {
           sequence: event.sequence,
           kind: "identity",
           videoTime: event.video_time,
-          title: event.identity === "confirmed" ? "Identity confirmed" : "Identity uncertain",
-          detail: event.identity === "uncertain" ? "Observations suppressed" : undefined,
+          label: { type: "identity", identity: event.identity },
           tone: event.identity === "confirmed" ? "positive" : "attention",
         }),
       };
@@ -172,8 +169,7 @@ function applyEvent(state: LiveState, event: LiveEvent): LiveState {
           sequence: event.sequence,
           kind: "alert",
           videoTime: entry.start_time,
-          title: `${CHANNEL_KIND_LABEL[entry.kind] ?? titleCase(entry.kind)} — for review`,
-          detail: "Flag from the provisional rules",
+          label: { type: "flag", kind: entry.kind },
           tone: "attention",
         }),
       };
@@ -195,8 +191,7 @@ function applyEvent(state: LiveState, event: LiveEvent): LiveState {
           sequence: event.sequence,
           kind: "activity",
           videoTime: event.video_time,
-          title: `Activity: ${ACTIVITY_LABEL[event.activity]}`,
-          detail: "Open episodes closed at the boundary",
+          label: { type: "activity", activity: event.activity },
           tone: "neutral",
         }),
       };
@@ -209,8 +204,7 @@ function applyEvent(state: LiveState, event: LiveEvent): LiveState {
           kind: "error",
           code: event.code,
           videoTime: event.video_time ?? next.videoTime,
-          title: ERROR_LABEL[event.code] ?? titleCase(event.code),
-          detail: "No observation was generated",
+          label: { type: "error", code: event.code },
           tone: "critical",
         }),
       };

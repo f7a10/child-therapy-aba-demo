@@ -7,12 +7,13 @@ interface Props {
   title: string;
   body: string;
   confirmLabel: string;
+  cancelLabel: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
 /** Native modal dialog: focus trap, Escape to cancel and inert background come from the platform. */
-export function ConfirmDialog({ open, title, body, confirmLabel, onConfirm, onCancel }: Props) {
+export function ConfirmDialog({ open, title, body, confirmLabel, cancelLabel, onConfirm, onCancel }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -46,7 +47,7 @@ export function ConfirmDialog({ open, title, body, confirmLabel, onConfirm, onCa
         </p>
         <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <Button onClick={onCancel} autoFocus>
-            Keep session
+            {cancelLabel}
           </Button>
           <Button variant="quiet-danger" onClick={onConfirm}>
             {confirmLabel}

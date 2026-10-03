@@ -11,7 +11,8 @@ import {
   Repeat,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { ACTIVITY_LABEL, CHANNEL_KIND_LABEL, CHANNEL_LABEL, formatClock, titleCase } from "../lib/format";
+import { formatClock } from "../lib/format";
+import { scenarioTitle, timelineText, titleCase, useI18n } from "../lib/i18n";
 import type { LiveState, TimelineItem, Tone } from "../lib/reducer";
 import type { Activity, ChannelEntry, SessionSnapshot } from "../lib/types";
 import { Button, Card, SectionTitle, cx } from "./ui";
@@ -21,9 +22,10 @@ export function CandidateCard({ alert, onAcknowledge, unavailable }: {
   onAcknowledge: (entryId: string) => void;
   unavailable: boolean;
 }) {
+  const { s } = useI18n();
   return (
     <Card aria-labelledby="candidate-title" className="overflow-hidden">
-      <SectionTitle id="candidate-title">For your review</SectionTitle>
+      <SectionTitle id="candidate-title">{s.card.title}</SectionTitle>
       <div aria-live="polite" className="px-5 pb-5">
         <AnimatePresence mode="wait" initial={false}>
           {alert && !unavailable ? (
@@ -41,29 +43,28 @@ export function CandidateCard({ alert, onAcknowledge, unavailable }: {
                 </span>
                 <div className="min-w-0">
                   <p className="text-lg font-semibold leading-tight tracking-tight text-ink">
-                    {CHANNEL_KIND_LABEL[alert.kind] ?? titleCase(alert.kind)}
+                    {s.kind[alert.kind] ?? titleCase(alert.kind)}
                   </p>
                   <p className="text-sm text-attention">
-                    {CHANNEL_LABEL[alert.channel]} · during {ACTIVITY_LABEL[alert.activity].toLowerCase()}
+                    {s.card.during(s.channel[alert.channel], s.activity[alert.activity])}
                   </p>
                 </div>
               </div>
-              <dl className="mt-4 grid grid-cols-2 gap-3 rounded-lg bg-surface/60 p-3 font-mono text-xs tabular">
+              <dl className="mt-4 grid grid-cols-2 gap-3 rounded-lg bg-surface/60 p-3 font-mono text-xs tabular" dir="ltr">
                 <div>
-                  <dt className="font-sans text-[11px] text-muted">From</dt>
+                  <dt className="font-sans text-[11px] text-muted">{s.card.from}</dt>
                   <dd className="text-ink">{formatClock(alert.start_time)}</dd>
                 </div>
                 <div>
-                  <dt className="font-sans text-[11px] text-muted">To</dt>
+                  <dt className="font-sans text-[11px] text-muted">{s.card.to}</dt>
                   <dd className="text-ink">{formatClock(alert.end_time)}</dd>
                 </div>
               </dl>
               <p className="mt-3 text-xs leading-relaxed text-muted">
-                A visible change flagged by the provisional rules for this activity. It is a prompt for your review,
-                not a conclusion about attention, intent, or behavior function.
+                {s.card.note}
               </p>
               <Button variant="secondary" className="mt-4 w-full" onClick={() => onAcknowledge(alert.entry_id)}>
-                Acknowledge
+                {s.card.acknowledge}
               </Button>
             </motion.div>
           ) : (
@@ -75,9 +76,7 @@ export function CandidateCard({ alert, onAcknowledge, unavailable }: {
               className="flex items-center gap-3 rounded-xl border border-dashed border-line-strong p-4 text-sm text-muted"
             >
               <MessageSquareDashed className="size-5 shrink-0 text-faint" aria-hidden />
-              {unavailable
-                ? "Unavailable while the stream, identity or analysis is not current."
-                : "Nothing needs your attention right now."}
+              {unavailable ? s.card.unavailable : s.card.nothing}
             </motion.div>
           )}
         </AnimatePresence>
@@ -87,47 +86,48 @@ export function CandidateCard({ alert, onAcknowledge, unavailable }: {
 }
 
 export function SessionFacts({ live, snapshot }: { live: LiveState; snapshot: SessionSnapshot | null }) {
+  const { s, language } = useI18n();
   const facts: Array<[string, React.ReactNode]> = [
-    ["Scenario", snapshot?.scenario.title ?? "—"],
+    [s.facts.scenario, scenarioTitle(snapshot?.scenario, language) ?? "—"],
     [
-      "Identity",
+      s.facts.identity,
       live.identity === null ? (
-        <span className="text-faint">Not selected</span>
+        <span className="text-faint">{s.facts.notSelected}</span>
       ) : (
         <span className={cx("inline-flex items-center gap-1.5", live.identity === "confirmed" ? "text-positive" : "text-attention")}>
           {live.identity === "confirmed" ? <Eye className="size-3.5" aria-hidden /> : <EyeOff className="size-3.5" aria-hidden />}
-          {live.identity === "confirmed" ? "Confirmed" : "Uncertain"}
+          {live.identity === "confirmed" ? s.facts.confirmed : s.facts.uncertain}
         </span>
       ),
     ],
-    ["Observations", snapshot?.scenario.kind === "precomputed" ? "Precomputed (not live)" : "Synthetic"],
+    [s.facts.observations, snapshot?.scenario.kind === "precomputed" ? s.facts.precomputed : s.facts.synthetic],
     [
-      "Recorder",
-      <span className="text-muted" title="Simulated frame ledger: counts frames that reached the recorder. No pixels are stored.">
-        Ledger · {live.recorder?.frames ?? 0} frames
-        {live.recorder?.dropped_frames ? <span className="text-critical"> · {live.recorder.dropped_frames} dropped</span> : null}
+      s.facts.recorder,
+      <span className="text-muted" title={s.facts.ledgerHint}>
+        {s.facts.ledger(live.recorder?.frames ?? 0)}
+        {live.recorder?.dropped_frames ? <span className="text-critical">{s.facts.dropped(live.recorder.dropped_frames)}</span> : null}
       </span>,
     ],
-    ["Flags for review", live.flagCount],
-    ["Analysis gaps", <span className={live.providerErrors ? "text-critical" : undefined}>{live.providerErrors}</span>],
+    [s.facts.flags, live.flagCount],
+    [s.facts.gaps, <span className={live.providerErrors ? "text-critical" : undefined}>{live.providerErrors}</span>],
     [
-      "Analysis p95",
+      s.facts.p95,
       live.performance ? (
         <span className={live.analysisStale ? "text-attention" : undefined}>{live.performance.p95.toFixed(0)} ms</span>
       ) : (
         <span className="text-faint">—</span>
       ),
     ],
-    ["Late results", <span className={live.staleCount ? "text-attention" : undefined}>{live.staleCount}</span>],
+    [s.facts.late, <span className={live.staleCount ? "text-attention" : undefined}>{live.staleCount}</span>],
   ];
   return (
     <Card aria-labelledby="facts-title">
-      <SectionTitle id="facts-title">Session</SectionTitle>
+      <SectionTitle id="facts-title">{s.facts.title}</SectionTitle>
       <dl className="divide-y divide-line px-5 pb-2 text-sm">
         {facts.map(([label, value]) => (
           <div key={label} className="flex items-center justify-between gap-3 py-2.5">
             <dt className="text-muted">{label}</dt>
-            <dd className="text-right font-medium tabular">{value}</dd>
+            <dd className="text-end font-medium tabular">{value}</dd>
           </div>
         ))}
       </dl>
@@ -143,9 +143,10 @@ export function ActivitySwitch({ value, enabled, pending, onChange }: {
   pending: boolean;
   onChange: (activity: Activity) => void;
 }) {
+  const { s } = useI18n();
   return (
     <Card aria-labelledby="activity-title">
-      <SectionTitle id="activity-title">Activity context</SectionTitle>
+      <SectionTitle id="activity-title">{s.activityCard.title}</SectionTitle>
       <div className="px-5 pb-5">
         <div role="radiogroup" aria-labelledby="activity-title" className="grid grid-cols-3 gap-1 rounded-xl bg-surface-2 p-1">
           {ACTIVITIES.map((activity) => {
@@ -169,13 +170,13 @@ export function ActivitySwitch({ value, enabled, pending, onChange }: {
                     transition={{ type: "spring", stiffness: 400, damping: 32 }}
                   />
                 )}
-                <span className="relative">{ACTIVITY_LABEL[activity]}</span>
+                <span className="relative">{s.activity[activity]}</span>
               </button>
             );
           })}
         </div>
         <p className="mt-2.5 text-xs leading-relaxed text-faint">
-          Set by you. Movement makes orientation and seat not applicable; break suspends all candidates.
+          {s.activityCard.hint}
         </p>
       </div>
     </Card>
@@ -198,20 +199,22 @@ const TONE_STYLE: Record<Tone, string> = {
 };
 
 export function Timeline({ items }: { items: TimelineItem[] }) {
+  const { s } = useI18n();
   return (
     <Card aria-labelledby="timeline-title" className="flex min-h-0 flex-col">
       <SectionTitle id="timeline-title" action={<span className="text-xs text-faint tabular">{items.length}</span>}>
-        Event log
+        {s.log.title}
       </SectionTitle>
       {items.length === 0 ? (
         <p className="flex items-center gap-2 px-5 pb-5 text-sm text-faint">
-          <CircleCheck className="size-4" aria-hidden /> Events will appear here.
+          <CircleCheck className="size-4" aria-hidden /> {s.log.empty}
         </p>
       ) : (
         <ol className="scrollbar-thin max-h-[340px] overflow-y-auto px-3 pb-3">
           <AnimatePresence initial={false}>
             {items.map((item) => {
               const Icon = KIND_ICON[item.kind];
+              const text = timelineText(item, s);
               return (
                 <motion.li
                   key={item.key}
@@ -226,16 +229,16 @@ export function Timeline({ items }: { items: TimelineItem[] }) {
                     </span>
                     <div className="min-w-0 flex-1">
                       <p className="flex items-center gap-2 text-sm font-medium">
-                        <span className="truncate">{item.title}</span>
+                        <span className="truncate">{text.title}</span>
                         {item.repeat > 1 && (
                           <span className="inline-flex items-center gap-0.5 rounded bg-surface-2 px-1 text-[10px] text-muted">
                             <Repeat className="size-2.5" aria-hidden />×{item.repeat}
                           </span>
                         )}
                       </p>
-                      {item.detail && <p className="truncate text-xs text-muted">{item.detail}</p>}
+                      {text.detail && <p className="truncate text-xs text-muted">{text.detail}</p>}
                     </div>
-                    <time className="shrink-0 pt-0.5 font-mono text-[11px] text-faint tabular">{formatClock(item.videoTime)}</time>
+                    <time className="shrink-0 pt-0.5 font-mono text-[11px] text-faint tabular" dir="ltr">{formatClock(item.videoTime)}</time>
                   </div>
                 </motion.li>
               );

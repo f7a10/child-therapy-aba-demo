@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { Check, Crosshair, Pause, Play, Power, RotateCcw, Square, Undo2 } from "lucide-react";
 import type { Command, SessionState } from "../lib/types";
+import { useI18n } from "../lib/i18n";
 import { Button, Kbd, cx } from "./ui";
 
-const STEPS: Array<{ label: string; states: SessionState[] }> = [
-  { label: "Open source", states: ["created"] },
-  { label: "Select target", states: ["previewing"] },
-  { label: "Observe", states: ["target_selected", "running", "paused", "stopping"] },
-  { label: "Review", states: ["completed", "failed"] },
+const STEPS: SessionState[][] = [
+  ["created"],
+  ["previewing"],
+  ["target_selected", "running", "paused", "stopping"],
+  ["completed", "failed"],
 ];
 
 interface Props {
@@ -20,7 +21,8 @@ interface Props {
 
 export function Controls({ state, pending, onCommand, onRestart, onLeave }: Props) {
   const [confirmStop, setConfirmStop] = useState(false);
-  const current = STEPS.findIndex((step) => state !== null && step.states.includes(state));
+  const { s } = useI18n();
+  const current = STEPS.findIndex((states) => state !== null && states.includes(state));
 
   useEffect(() => {
     if (!confirmStop) return;
@@ -50,12 +52,12 @@ export function Controls({ state, pending, onCommand, onRestart, onLeave }: Prop
 
   return (
     <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-      <ol className="flex items-center gap-1.5" aria-label="Session progress">
-        {STEPS.map((step, index) => {
+      <ol className="flex items-center gap-1.5" aria-label={s.controls.progress}>
+        {STEPS.map((_, index) => {
           const done = index < current;
           const active = index === current;
           return (
-            <li key={step.label} className="flex items-center gap-1.5">
+            <li key={index} className="flex items-center gap-1.5">
               <span
                 className={cx(
                   "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
@@ -73,7 +75,7 @@ export function Controls({ state, pending, onCommand, onRestart, onLeave }: Prop
                 >
                   {done ? <Check className="size-2.5" aria-hidden /> : index + 1}
                 </span>
-                <span className="hidden md:inline">{step.label}</span>
+                <span className="hidden md:inline">{s.controls.steps[index]}</span>
               </span>
               {index < STEPS.length - 1 && <span className="h-px w-3 bg-line-strong md:w-5" aria-hidden />}
             </li>
@@ -84,27 +86,27 @@ export function Controls({ state, pending, onCommand, onRestart, onLeave }: Prop
       <div className="flex flex-wrap items-center gap-2">
         {state === "created" && (
           <Button variant="primary" icon={<Power className="size-4" />} loading={busy("open")} onClick={() => onCommand("open")}>
-            Open source
+            {s.controls.open}
           </Button>
         )}
         {state === "previewing" && (
           <Button variant="primary" icon={<Crosshair className="size-4" />} loading={busy("select_target")} onClick={() => onCommand("select_target")}>
-            Lock target
+            {s.controls.lock}
           </Button>
         )}
         {state === "target_selected" && (
           <Button variant="primary" icon={<Play className="size-4" />} loading={busy("start")} onClick={() => onCommand("start")}>
-            Start session
+            {s.controls.start}
           </Button>
         )}
         {state === "running" && (
           <Button icon={<Pause className="size-4" />} loading={busy("pause")} onClick={() => onCommand("pause")}>
-            Pause <Kbd>Space</Kbd>
+            {s.controls.pause} <Kbd>Space</Kbd>
           </Button>
         )}
         {state === "paused" && (
           <Button variant="primary" icon={<Play className="size-4" />} loading={busy("resume")} onClick={() => onCommand("resume")}>
-            Resume <Kbd>Space</Kbd>
+            {s.controls.resume} <Kbd>Space</Kbd>
           </Button>
         )}
         {(state === "running" || state === "paused") && (
@@ -115,16 +117,16 @@ export function Controls({ state, pending, onCommand, onRestart, onLeave }: Prop
             onClick={stop}
             aria-live="polite"
           >
-            {confirmStop ? "Confirm end session" : "End session"}
+            {confirmStop ? s.controls.confirmEnd : s.controls.end}
           </Button>
         )}
         {(state === "completed" || state === "failed") && (
           <>
             <Button icon={<RotateCcw className="size-4" />} onClick={onRestart}>
-              Run again
+              {s.controls.again}
             </Button>
             <Button variant="primary" icon={<Undo2 className="size-4" />} onClick={onLeave}>
-              New session
+              {s.controls.newSession}
             </Button>
           </>
         )}

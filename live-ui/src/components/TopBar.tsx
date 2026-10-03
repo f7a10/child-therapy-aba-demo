@@ -1,14 +1,15 @@
-import { FileClock, FlaskConical } from "lucide-react";
+import { FileClock, FlaskConical, Languages } from "lucide-react";
+import { useI18n } from "../lib/i18n";
 import type { ProviderKind } from "../lib/types";
 import type { Connection } from "../lib/reducer";
 import { cx } from "./ui";
 
-const CONNECTION: Record<Connection, { label: string; dot: string }> = {
-  idle: { label: "No session", dot: "bg-faint" },
-  connecting: { label: "Connecting", dot: "bg-attention animate-pulse" },
-  live: { label: "Stream connected", dot: "bg-positive" },
-  reconnecting: { label: "Reconnecting", dot: "bg-attention animate-pulse" },
-  closed: { label: "Stream closed", dot: "bg-faint" },
+const CONNECTION_DOT: Record<Connection, string> = {
+  idle: "bg-faint",
+  connecting: "bg-attention animate-pulse",
+  live: "bg-positive",
+  reconnecting: "bg-attention animate-pulse",
+  closed: "bg-faint",
 };
 
 export function BrandMark({ className }: { className?: string }) {
@@ -27,14 +28,14 @@ export function TopBar({ connection, sessionId, onHome, providerKind }: {
   onHome: () => void;
   providerKind: ProviderKind | null;
 }) {
+  const { s, toggle } = useI18n();
   const replay = providerKind === "precomputed";
-  const status = CONNECTION[connection];
   const brand = (
     <>
       <BrandMark className="size-9" />
-      <div className="text-left leading-tight">
-        <p className="text-[15px] font-semibold tracking-tight">ABA Visual Assistant</p>
-        <p className="text-xs text-muted">Live session · engineering preview</p>
+      <div className="text-start leading-tight">
+        <p className="text-[15px] font-semibold tracking-tight">{s.topbar.title}</p>
+        <p className="text-xs text-muted">{s.topbar.subtitle}</p>
       </div>
     </>
   );
@@ -44,8 +45,8 @@ export function TopBar({ connection, sessionId, onHome, providerKind }: {
         {sessionId ? (
           <button
             onClick={onHome}
-            className="-ml-2 flex items-center gap-3 rounded-xl px-2 py-1 transition-colors hover:bg-surface-2"
-            aria-label="Back to all scenarios"
+            className="-ms-2 flex items-center gap-3 rounded-xl px-2 py-1 transition-colors hover:bg-surface-2"
+            aria-label={s.topbar.back}
           >
             {brand}
           </button>
@@ -54,23 +55,29 @@ export function TopBar({ connection, sessionId, onHome, providerKind }: {
         )}
 
         <span
-          className="ml-2 hidden items-center gap-1.5 rounded-full border border-attention-line bg-attention-soft px-3 py-1 text-xs font-semibold tracking-wide text-attention sm:inline-flex"
+          className="ms-2 hidden items-center gap-1.5 rounded-full border border-attention-line bg-attention-soft px-3 py-1 text-xs font-semibold tracking-wide text-attention sm:inline-flex"
           title={
-            replay
-              ? "Earlier precomputed rows replayed against the matching video. Not live inference; nothing is recorded."
-              : "Synthetic source and observations. No camera, no model inference, nothing is recorded."
+            replay ? s.topbar.replayHint : s.topbar.simulationHint
           }
         >
           {replay ? <FileClock className="size-3.5" aria-hidden /> : <FlaskConical className="size-3.5" aria-hidden />}
-          {replay ? "PRECOMPUTED REPLAY" : "SIMULATION"}
+          {replay ? s.topbar.replay : s.topbar.simulation}
         </span>
 
-        <div className="ml-auto flex items-center gap-4 text-xs text-muted">
+        <div className="ms-auto flex items-center gap-4 text-xs text-muted">
           {sessionId && <span className="hidden font-mono md:inline">{sessionId}</span>}
           <span className="inline-flex items-center gap-2" role="status" aria-live="polite">
-            <span className={cx("size-2 rounded-full", status.dot)} aria-hidden />
-            {status.label}
+            <span className={cx("size-2 rounded-full", CONNECTION_DOT[connection])} aria-hidden />
+            {s.topbar.connection[connection]}
           </span>
+          <button
+            onClick={toggle}
+            aria-label={s.topbar.switchLabel}
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-2.5 text-xs font-medium text-ink transition-colors hover:bg-surface-2"
+          >
+            <Languages className="size-3.5" aria-hidden />
+            {s.topbar.switchTo}
+          </button>
         </div>
       </div>
     </header>

@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { CirclePause, CircleSlash, MousePointerClick, ScanLine, VideoOff } from "lucide-react";
 import type { LiveState } from "../lib/reducer";
 import { formatClock } from "../lib/format";
+import { useI18n } from "../lib/i18n";
 import { cx } from "./ui";
 
 interface Props {
@@ -21,6 +22,7 @@ const STANDING_LEGS = "M -30 -20 L -34 110 M 30 -20 L 34 110";
  * there is no camera frame, pose, or detection behind it.
  */
 export function Stage({ live, stale, canSelect, onSelect }: Props) {
+  const { s } = useI18n();
   const state = live.sessionState;
   const signals = live.observation?.signals;
   const uncertain = live.identity === "uncertain";
@@ -31,14 +33,14 @@ export function Stage({ live, stale, canSelect, onSelect }: Props) {
   const replay = live.snapshot?.scenario.kind === "precomputed";
 
   return (
-    <div className="stage-grid relative aspect-video overflow-hidden rounded-t-2xl text-white">
-      <svg viewBox="0 0 1600 900" className={cx("absolute inset-0 size-full transition-[filter,opacity] duration-500", stale && "opacity-50 grayscale")} role="img" aria-label="Synthetic scene visualization">
+    <div className="stage-grid relative aspect-video overflow-hidden rounded-t-2xl text-white" dir="ltr">
+      <svg viewBox="0 0 1600 900" className={cx("absolute inset-0 size-full transition-[filter,opacity] duration-500", stale && "opacity-50 grayscale")} role="img" aria-label={s.stage.aria}>
         {/* Task area and seat zone */}
         <g opacity={sourceOpen ? 1 : 0.35} className="transition-opacity duration-500">
           <rect x="190" y="560" width="360" height="170" rx="18" fill="rgb(255 255 255 / 0.04)" stroke="rgb(255 255 255 / 0.14)" />
-          <text x="210" y="600" fill="rgb(255 255 255 / 0.45)" fontSize="22" fontFamily="var(--font-mono)" letterSpacing="2">TASK AREA</text>
+          <text x="210" y="600" fill="rgb(255 255 255 / 0.45)" fontSize="22" fontFamily="var(--font-mono)" letterSpacing="2">{s.stage.task}</text>
           <rect x="650" y="420" width="300" height="360" rx="22" fill="none" stroke="rgb(255 255 255 / 0.22)" strokeDasharray="10 10" />
-          <text x="670" y="460" fill="rgb(255 255 255 / 0.45)" fontSize="22" fontFamily="var(--font-mono)" letterSpacing="2">SEAT</text>
+          <text x="670" y="460" fill="rgb(255 255 255 / 0.45)" fontSize="22" fontFamily="var(--font-mono)" letterSpacing="2">{s.stage.seat}</text>
         </g>
 
         {sourceOpen && (
@@ -56,7 +58,7 @@ export function Stage({ live, stale, canSelect, onSelect }: Props) {
               turned={signals?.orientation === true}
               highlight={canSelect}
             />
-            <SelectionFrame visible={selected} uncertain={uncertain} standing={standing} />
+            <SelectionFrame visible={selected} uncertain={uncertain} standing={standing} label={s.stage.target} />
           </motion.g>
         )}
       </svg>
@@ -65,11 +67,11 @@ export function Stage({ live, stale, canSelect, onSelect }: Props) {
       <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-4">
         <span className="inline-flex items-center gap-2 rounded-lg bg-black/45 px-2.5 py-1.5 font-mono text-[11px] tracking-wider text-white/80 backdrop-blur">
           <ScanLine className="size-3.5" aria-hidden />
-          {replay ? "FILE-AS-LIVE · PRECOMPUTED ROWS · VIDEO NOT SHOWN" : "SYNTHETIC SOURCE · NO VIDEO"}
+          {replay ? s.stage.replay : s.stage.synthetic}
         </span>
         {stale && sourceOpen ? (
           <span className="inline-flex items-center gap-2 rounded-lg bg-white/10 px-2.5 py-1.5 font-mono text-[11px] tracking-wider text-white/80 backdrop-blur">
-            {state === "completed" || state === "failed" ? "SESSION ENDED · LAST KNOWN STATE" : "STALE · LAST KNOWN STATE"}
+            {state === "completed" || state === "failed" ? s.stage.ended : s.stage.stale}
           </span>
         ) : selected && (
           <span
@@ -79,25 +81,25 @@ export function Stage({ live, stale, canSelect, onSelect }: Props) {
             )}
           >
             <span className={cx("size-1.5 rounded-full", uncertain ? "bg-amber-300" : "bg-emerald-300")} aria-hidden />
-            {uncertain ? "Identity uncertain" : live.identity === "confirmed" ? "Target confirmed" : "Target locked"}
+            {uncertain ? s.stage.uncertain : live.identity === "confirmed" ? s.stage.confirmed : s.stage.locked}
           </span>
         )}
       </div>
 
       <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 bg-gradient-to-t from-black/60 to-transparent p-4 pt-12">
         <div>
-          <p className="text-[11px] uppercase tracking-[0.18em] text-white/50">Video time</p>
+          <p className="text-[11px] uppercase tracking-[0.18em] text-white/50">{s.stage.videoTime}</p>
           <p className="font-mono text-3xl font-medium tracking-tight tabular">{formatClock(live.videoTime)}</p>
         </div>
         <div className="text-right font-mono text-[11px] leading-relaxed text-white/55 tabular">
-          <p>observations {live.observationCount}</p>
-          <p>analysis {live.latencyMs == null ? "—" : `${live.latencyMs.toFixed(1)} ms`}</p>
+          <p>{s.stage.observations} {live.observationCount}</p>
+          <p>{s.stage.analysis} {live.latencyMs == null ? "—" : `${live.latencyMs.toFixed(1)} ms`}</p>
           <p className={cx(live.analysisStale && "font-semibold text-amber-300")}>
             {live.ageS == null
-              ? "result age —"
+              ? `${s.stage.resultAge} —`
               : live.analysisStale
-                ? `LATE · ${live.ageS.toFixed(1)} s behind`
-                : `result age ${live.ageS.toFixed(2)} s`}
+                ? s.stage.late(live.ageS.toFixed(1))
+                : `${s.stage.resultAge} ${live.ageS.toFixed(2)} s`}
           </p>
         </div>
       </div>
@@ -105,22 +107,22 @@ export function Stage({ live, stale, canSelect, onSelect }: Props) {
       <AnimatePresence>
         {uncertain && selected && state === "running" && (
           <Overlay key="uncertain" tone="amber" icon={<CircleSlash className="size-5" aria-hidden />}>
-            Target not visible — all indicators suppressed until identity is confirmed
+            {s.stage.overlayUncertain}
           </Overlay>
         )}
         {state === "created" && (
           <Overlay key="closed" icon={<VideoOff className="size-5" aria-hidden />}>
-            Source not opened
+            {s.stage.notOpened}
           </Overlay>
         )}
         {state === "previewing" && (
           <Overlay key="select" tone="accent" icon={<MousePointerClick className="size-5" aria-hidden />} position="top">
-            Click the child you will observe to lock the target
+            {s.stage.select}
           </Overlay>
         )}
         {state === "paused" && (
           <Overlay key="paused" icon={<CirclePause className="size-5" aria-hidden />}>
-            Paused — session clock and analysis halted
+            {s.stage.paused}
           </Overlay>
         )}
       </AnimatePresence>
@@ -244,7 +246,12 @@ function Figure({ standing, moving, handsMoving, turned, highlight }: {
   );
 }
 
-function SelectionFrame({ visible, uncertain, standing }: { visible: boolean; uncertain: boolean; standing: boolean }) {
+function SelectionFrame({ visible, uncertain, standing, label }: {
+  visible: boolean;
+  uncertain: boolean;
+  standing: boolean;
+  label: string;
+}) {
   if (!visible) return null;
   const top = standing ? -330 : -280;
   const w = 150;
@@ -264,7 +271,7 @@ function SelectionFrame({ visible, uncertain, standing }: { visible: boolean; un
       ))}
       <rect x={-w} y={top - 52} width="128" height="36" rx="8" fill={color} />
       <text x={-w + 14} y={top - 27} fontSize="20" fontWeight="600" fill="#06231f" fontFamily="var(--font-mono)">
-        TARGET
+        {label}
       </text>
     </motion.g>
   );

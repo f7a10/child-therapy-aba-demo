@@ -75,7 +75,7 @@ describe("live reducer", () => {
     const lost = apply(flagged, { sequence: 2, event_type: "identity_state", identity: "uncertain", video_time: 3 });
     expect(lost.flag).toBeNull();
     expect(lost.entries).toHaveLength(1);
-    expect(lost.timeline[0]?.title).toBe("Identity uncertain");
+    expect(lost.timeline[0]?.label).toEqual({ type: "identity", identity: "uncertain" });
   });
 
   it("clears the card and records termination on failure", () => {

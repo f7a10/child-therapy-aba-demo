@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { api } from "../lib/api";
+import { SCENARIO_TEXT, useI18n } from "../lib/i18n";
 import type { Scenario } from "../lib/types";
 import { Button, Card, Pill } from "./ui";
 
@@ -34,11 +35,7 @@ const SCENARIO_ICON: Record<string, LucideIcon> = {
   "precomputed-replay": FileVideo,
 };
 
-const PRINCIPLES = [
-  { icon: UserCheck, title: "Therapist selects the child", body: "No face recognition. Identity never switches automatically." },
-  { icon: CircleDashed, title: "Unobservable ≠ absent", body: "When the target is hidden, every indicator is suppressed." },
-  { icon: Hand, title: "Candidates, not conclusions", body: "Observations are for your review. No diagnosis, no scores." },
-];
+const PRINCIPLE_ICONS = [UserCheck, CircleDashed, Hand];
 
 interface Props {
   onStart: (scenarioId: string) => void;
@@ -50,9 +47,10 @@ export function Launcher({ onStart, creating, error }: Props) {
   const [scenarios, setScenarios] = useState<Scenario[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
+  const { s } = useI18n();
 
   useEffect(() => {
-    api.scenarios().then(setScenarios, () => setLoadError("Cannot reach the local live-session server. Start it with python -m aba_demo.live."));
+    api.scenarios().then(setScenarios, () => setLoadError("server_down"));
   }, []);
 
   return (
@@ -66,18 +64,19 @@ export function Launcher({ onStart, creating, error }: Props) {
       <section className="grid gap-10 pt-12 pb-10 lg:grid-cols-[1.1fr_1fr] lg:items-end lg:pt-20">
         <div>
           <Pill tone="attention" className="mb-5">
-            <ShieldCheck className="size-3.5" aria-hidden /> Synthetic data only · nothing leaves this machine
+            <ShieldCheck className="size-3.5" aria-hidden /> {s.launcher.badge}
           </Pill>
           <h1 className="max-w-[16ch] text-4xl font-semibold tracking-[-0.03em] text-balance sm:text-5xl lg:text-6xl">
-            Clear evidence, in the moment.
+            {s.launcher.heading}
           </h1>
           <p className="mt-5 max-w-[56ch] text-[17px] leading-relaxed text-muted text-pretty">
-            A calm live view for the therapist in session: who is being observed, what is observable right now, and
-            which candidate observations deserve a look. You interpret the evidence and make every decision.
+            {s.launcher.intro}
           </p>
         </div>
         <ul className="grid gap-3">
-          {PRINCIPLES.map(({ icon: Icon, title, body }, index) => (
+          {s.launcher.principles.map(({ title, body }, index) => {
+            const Icon = PRINCIPLE_ICONS[index] ?? Hand;
+            return (
             <motion.li
               key={title}
               initial={{ opacity: 0, x: 12 }}
@@ -93,22 +92,21 @@ export function Launcher({ onStart, creating, error }: Props) {
                 <p className="text-sm text-muted">{body}</p>
               </div>
             </motion.li>
-          ))}
+            );
+          })}
         </ul>
       </section>
 
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3 border-t border-line pt-8">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight">Choose a simulated session</h2>
-          <p className="mt-1 text-sm text-muted">
-            Each scenario scripts identity and the five indicators to exercise the interface and its failure states.
-          </p>
+          <h2 className="text-xl font-semibold tracking-tight">{s.launcher.chooseTitle}</h2>
+          <p className="mt-1 text-sm text-muted">{s.launcher.chooseBody}</p>
         </div>
       </div>
 
       {(loadError || error) && (
         <p role="alert" className="mb-5 rounded-xl border border-critical/30 bg-critical-soft px-4 py-3 text-sm text-critical">
-          {loadError ?? error}
+          {loadError ? s.launcher.serverDown : error}
         </p>
       )}
 
@@ -142,7 +140,9 @@ function ScenarioCard({ scenario, index, busy, disabled, onStart }: {
   disabled: boolean;
   onStart: () => void;
 }) {
+  const { s, language } = useI18n();
   const Icon = SCENARIO_ICON[scenario.id] ?? LayoutPanelTop;
+  const text = SCENARIO_TEXT[language]?.[scenario.id] ?? { title: scenario.title, summary: scenario.summary };
   return (
     <motion.div
       initial={{ opacity: 0, y: 14 }}
@@ -155,17 +155,17 @@ function ScenarioCard({ scenario, index, busy, disabled, onStart }: {
             <Icon className="size-5" aria-hidden />
           </span>
           <div className="flex flex-col items-end gap-1.5">
-            {scenario.kind === "precomputed" && <Pill tone="attention">Precomputed replay</Pill>}
+            {scenario.kind === "precomputed" && <Pill tone="attention">{s.launcher.precomputed}</Pill>}
             {scenario.duration_s != null && (
-              <span className="inline-flex items-center gap-1 font-mono text-xs text-muted">
+              <span className="inline-flex items-center gap-1 font-mono text-xs text-muted" dir="ltr">
                 <Timer className="size-3.5" aria-hidden />
                 {scenario.duration_s}s{scenario.fps ? ` · ${Math.round(scenario.fps)} fps` : ""}
               </span>
             )}
           </div>
         </div>
-        <h3 className="mt-4 text-lg font-semibold tracking-tight">{scenario.title}</h3>
-        <p className="mt-1.5 flex-1 text-sm leading-relaxed text-muted">{scenario.summary}</p>
+        <h3 className="mt-4 text-lg font-semibold tracking-tight">{text.title}</h3>
+        <p className="mt-1.5 flex-1 text-sm leading-relaxed text-muted">{text.summary}</p>
         <div className="mt-4 flex flex-wrap gap-1.5">
           {scenario.exercises.map((tag) => (
             <span key={tag} className="rounded-md bg-surface-2 px-2 py-0.5 text-[11px] text-muted">
@@ -179,10 +179,10 @@ function ScenarioCard({ scenario, index, busy, disabled, onStart }: {
           onClick={onStart}
           loading={busy}
           disabled={disabled}
-          aria-label={`Launch ${scenario.title} simulation`}
+          aria-label={s.launcher.launchAria(text.title)}
         >
-          Launch simulation
-          <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
+          {s.launcher.launch}
+          <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5 rtl:rotate-180" aria-hidden />
         </Button>
       </Card>
     </motion.div>

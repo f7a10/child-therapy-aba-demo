@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowLeft, CircleAlert, CircleCheckBig, Hourglass, TriangleAlert, WifiOff, X } from "lucide-react";
-import { SESSION_STATE_LABEL, TERMINATION_LABEL, formatDuration } from "../lib/format";
+import { formatDuration } from "../lib/format";
+import { scenarioTitle, titleCase, useI18n } from "../lib/i18n";
 import { TERMINAL } from "../lib/reducer";
 import type { LiveSessionController } from "../lib/useLiveSession";
 import { Controls } from "./Controls";
@@ -12,6 +13,7 @@ import { Card, Pill, cx } from "./ui";
 
 export function Workspace({ live, onHome }: { live: LiveSessionController; onHome: () => void }) {
   const { state } = live;
+  const { s, language } = useI18n();
   const session = state.sessionState;
   const terminal = session !== null && TERMINAL.includes(session);
   const streamDown = state.connection === "reconnecting" || state.connection === "connecting";
@@ -35,19 +37,19 @@ export function Workspace({ live, onHome }: { live: LiveSessionController; onHom
       transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
       className="mx-auto grid max-w-[1440px] gap-5 px-5 py-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:px-8"
     >
-      <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-3 lg:col-span-2">
+      <nav aria-label={s.workspace.breadcrumb} className="flex min-w-0 items-center gap-3 lg:col-span-2">
         <button
           onClick={onHome}
-          className="group inline-flex h-9 items-center gap-2 rounded-xl pr-3 pl-2 text-sm font-medium text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+          className="group inline-flex h-9 items-center gap-2 rounded-xl pe-3 ps-2 text-sm font-medium text-muted transition-colors hover:bg-surface-2 hover:text-ink"
         >
-          <ArrowLeft className="size-4 transition-transform group-hover:-translate-x-0.5" aria-hidden />
-          All scenarios
+          <ArrowLeft className="size-4 transition-transform group-hover:-translate-x-0.5 rtl:rotate-180" aria-hidden />
+          {s.workspace.allScenarios}
         </button>
         <span className="text-line-strong" aria-hidden>/</span>
-        <h1 className="truncate text-sm font-semibold tracking-tight">{state.snapshot?.scenario.title ?? "Session"}</h1>
+        <h1 className="truncate text-sm font-semibold tracking-tight">{scenarioTitle(state.snapshot?.scenario, language) ?? s.workspace.session}</h1>
         {session && (
           <Pill tone={session === "failed" ? "critical" : session === "running" ? "positive" : "neutral"}>
-            {SESSION_STATE_LABEL[session]}
+            {s.sessionState[session]}
           </Pill>
         )}
       </nav>
@@ -55,29 +57,28 @@ export function Workspace({ live, onHome }: { live: LiveSessionController; onHom
       <div className="flex min-w-0 flex-col gap-5">
         <AnimatePresence>
           {live.error && (
-            <Banner key="error" tone="critical" icon={<CircleAlert className="size-4" />} onClose={live.clearError}>
+            <Banner key="error" tone="critical" icon={<CircleAlert className="size-4" />} onClose={live.clearError} dismissLabel={s.workspace.dismiss}>
               {live.error}
             </Banner>
           )}
           {streamDown && state.lastSequence > 0 && !terminal && (
             <Banner key="stream" tone="attention" icon={<WifiOff className="size-4" />}>
-              Event stream interrupted — showing the last known state as stale while reconnecting.
+              {s.workspace.streamDown}
             </Banner>
           )}
           {lost && (
-            <Banner key="lost" tone="critical" icon={<CircleAlert className="size-4" />} action={{ label: "New session", onClick: live.leave }}>
-              This session is no longer available on the server (it may have restarted). Nothing shown here is current.
+            <Banner key="lost" tone="critical" icon={<CircleAlert className="size-4" />} action={{ label: s.workspace.newSession, onClick: live.leave }}>
+              {s.workspace.lost}
             </Banner>
           )}
           {state.analysisStale && !terminal && (
             <Banner key="late" tone="attention" icon={<Hourglass className="size-4" />}>
-              Analysis is running {state.ageS?.toFixed(1)} s behind live. Results are marked late and not shown as
-              current.
+              {s.workspace.late(state.ageS?.toFixed(1) ?? "?")}
             </Banner>
           )}
           {state.gapDetected && (
             <Banner key="gap" tone="attention" icon={<TriangleAlert className="size-4" />}>
-              Some events were not retained during reconnection; the log may be incomplete.
+              {s.workspace.gap}
             </Banner>
           )}
           {terminal && state.termination && <Summary key="summary" live={live} />}
@@ -101,7 +102,7 @@ export function Workspace({ live, onHome }: { live: LiveSessionController; onHom
         <SessionStrip entries={state.entries} duration={state.snapshot?.scenario.duration_s ?? null} videoTime={state.videoTime} />
       </div>
 
-      <aside className="flex min-w-0 flex-col gap-5" aria-label="Session details">
+      <aside className="flex min-w-0 flex-col gap-5" aria-label={s.workspace.details}>
         <div className="hidden lg:block">{candidate}</div>
         <SessionFacts live={state} snapshot={state.snapshot} />
         <ActivitySwitch
@@ -116,12 +117,13 @@ export function Workspace({ live, onHome }: { live: LiveSessionController; onHom
   );
 }
 
-function Banner({ tone, icon, children, onClose, action }: {
+function Banner({ tone, icon, children, onClose, action, dismissLabel = "Dismiss" }: {
   tone: "critical" | "attention";
   icon: React.ReactNode;
   children: React.ReactNode;
   onClose?: () => void;
   action?: { label: string; onClick: () => void };
+  dismissLabel?: string;
 }) {
   return (
     <motion.div
@@ -145,7 +147,7 @@ function Banner({ tone, icon, children, onClose, action }: {
           </button>
         )}
         {onClose && (
-          <button onClick={onClose} className="rounded-md p-1 hover:bg-surface/50" aria-label="Dismiss">
+          <button onClick={onClose} className="rounded-md p-1 hover:bg-surface/50" aria-label={dismissLabel}>
             <X className="size-4" />
           </button>
         )}
@@ -156,14 +158,15 @@ function Banner({ tone, icon, children, onClose, action }: {
 
 function Summary({ live }: { live: LiveSessionController }) {
   const { state } = live;
+  const { s } = useI18n();
   const failed = state.sessionState === "failed";
   const reason = state.termination?.reason ?? "";
   const stats = [
-    ["Video time", formatDuration(state.videoTime ?? 0)],
-    ["Observations", String(state.observationCount)],
-    ["Flags", String(state.flagCount)],
-    ["Analysis gaps", String(state.providerErrors)],
-    ["Late results", String(state.staleCount)],
+    [s.workspace.stats.videoTime, formatDuration(state.videoTime ?? 0)],
+    [s.workspace.stats.observations, String(state.observationCount)],
+    [s.workspace.stats.flags, String(state.flagCount)],
+    [s.workspace.stats.gaps, String(state.providerErrors)],
+    [s.workspace.stats.late, String(state.staleCount)],
   ];
   return (
     <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
@@ -173,12 +176,12 @@ function Summary({ live }: { live: LiveSessionController }) {
             {failed ? <CircleAlert className="size-5" aria-hidden /> : <CircleCheckBig className="size-5" aria-hidden />}
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-lg font-semibold tracking-tight">{failed ? "Session failed" : "Session ended"}</p>
+            <p className="text-lg font-semibold tracking-tight">{failed ? s.workspace.failed : s.workspace.ended}</p>
             <p className="text-sm text-muted">
-              {TERMINATION_LABEL[reason] ?? reason}. No video was recorded.{" "}
+              {s.termination[reason] ?? titleCase(reason)}. {s.workspace.noVideo}{" "}
               {state.recording
-                ? `Frame ledger verified: ${state.recording.frames} frames, ${state.recording.dropped_frames} dropped · sha256 ${state.recording.sha256.slice(0, 12)}…`
-                : "No complete frame ledger was produced."}
+                ? s.workspace.ledger(state.recording.frames, state.recording.dropped_frames, state.recording.sha256.slice(0, 12))
+                : s.workspace.noLedger}
             </p>
           </div>
         </div>
