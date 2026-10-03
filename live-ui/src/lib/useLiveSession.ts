@@ -98,9 +98,9 @@ export function useLiveSession() {
     dispatch({ type: "reset" });
   }, [sessionId]);
 
-  const dismissAlert = useCallback((id: number) => dispatch({ type: "dismiss_alert", id }), []);
+  const dismissFlag = useCallback((entryId: string) => dispatch({ type: "dismiss_flag", entryId }), []);
 
-  return { state, sessionId, pending, error, clearError: () => setError(null), startScenario, send, leave, dismissAlert };
+  return { state, sessionId, pending, error, clearError: () => setError(null), startScenario, send, leave, dismissFlag };
 }
 
 export type LiveSessionController = ReturnType<typeof useLiveSession>;

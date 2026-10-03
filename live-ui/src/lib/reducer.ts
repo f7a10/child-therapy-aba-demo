@@ -1,7 +1,7 @@
-import { ACTIVITY_LABEL, ERROR_LABEL, INDICATOR_LABEL, SESSION_STATE_LABEL, TERMINATION_LABEL, titleCase } from "./format";
+import { ACTIVITY_LABEL, CHANNEL_KIND_LABEL, ERROR_LABEL, SESSION_STATE_LABEL, TERMINATION_LABEL, titleCase } from "./format";
 import type {
   Activity,
-  EngineEvent,
+  ChannelEntry,
   EngineSnapshot,
   Identity,
   RecorderStatus,
@@ -37,8 +37,11 @@ export interface LiveState {
   observation: Observation | null;
   engine: EngineSnapshot | null;
   activity: Activity;
-  alert: EngineEvent | null;
-  alertCount: number;
+  /** Channel events released so far (causal). */
+  entries: ChannelEntry[];
+  /** The flagged entry shown as the review card, until acknowledged or invalidated. */
+  flag: ChannelEntry | null;
+  flagCount: number;
   observationCount: number;
   providerErrors: number;
   latencyMs: number | null;
@@ -61,7 +64,7 @@ export type Action =
   | { type: "stream_ready"; ready: StreamReady }
   | { type: "event"; event: LiveEvent }
   | { type: "connection"; status: Connection }
-  | { type: "dismiss_alert"; id: number };
+  | { type: "dismiss_flag"; entryId: string };
 
 export const TERMINAL: readonly SessionState[] = ["completed", "failed"];
 const TIMELINE_LIMIT = 150;
@@ -75,8 +78,9 @@ export const initialState: LiveState = {
   observation: null,
   engine: null,
   activity: "table",
-  alert: null,
-  alertCount: 0,
+  entries: [],
+  flag: null,
+  flagCount: 0,
   observationCount: 0,
   providerErrors: 0,
   latencyMs: null,
@@ -112,7 +116,7 @@ function applyEvent(state: LiveState, event: LiveEvent): LiveState {
       return {
         ...next,
         sessionState: event.state,
-        alert: terminal ? null : next.alert,
+        flag: terminal ? null : next.flag,
         recording: terminal ? event.recording ?? null : next.recording,
         termination: terminal ? { reason: event.reason ?? "unknown", recorded: event.recorded === true } : null,
         timeline: push(next, {
@@ -130,13 +134,13 @@ function applyEvent(state: LiveState, event: LiveEvent): LiveState {
         ...next,
         identity: event.identity,
         // Identity loss invalidates any visible card: it is never shown as current.
-        alert: event.identity === "uncertain" ? null : next.alert,
+        flag: event.identity === "uncertain" ? null : next.flag,
         timeline: push(next, {
           sequence: event.sequence,
           kind: "identity",
           videoTime: event.video_time,
           title: event.identity === "confirmed" ? "Identity confirmed" : "Identity uncertain",
-          detail: event.identity === "uncertain" ? "All five indicators suppressed" : undefined,
+          detail: event.identity === "uncertain" ? "Observations suppressed" : undefined,
           tone: event.identity === "confirmed" ? "positive" : "attention",
         }),
       };
@@ -151,45 +155,28 @@ function applyEvent(state: LiveState, event: LiveEvent): LiveState {
         analysisStale: event.stale,
         staleCount: next.staleCount + (event.stale ? 1 : 0),
       };
-    case "engine_state": {
-      const engine = event.state;
-      // A candidate from a stale result is logged, but never shown as the current card.
-      if (engine.alert && event.stale) {
-        return {
-          ...next,
-          engine,
-          activity: engine.activity,
-          alert: null,
-          alertCount: next.alertCount + 1,
-          timeline: push(next, {
-            sequence: event.sequence,
-            kind: "alert",
-            videoTime: engine.alert.evidence_time,
-            title: `${INDICATOR_LABEL[engine.alert.type]} — candidate (late)`,
-            detail: "Analysis was behind live; not shown as current",
-            tone: "attention",
-          }),
-        };
-      }
-      if (engine.alert) {
-        return {
-          ...next,
-          engine,
-          activity: engine.activity,
-          alert: engine.alert,
-          alertCount: next.alertCount + 1,
-          timeline: push(next, {
-            sequence: event.sequence,
-            kind: "alert",
-            videoTime: engine.alert.evidence_time,
-            title: `${INDICATOR_LABEL[engine.alert.type]} — candidate`,
-            detail: "For therapist review",
-            tone: "attention",
-          }),
-        };
-      }
-      const updated = next.alert ? engine.events.find((e) => e.id === next.alert?.id) ?? next.alert : null;
-      return { ...next, engine, activity: engine.activity, alert: updated };
+    case "engine_state":
+      // The engine still tracks identity and activity; its old indicator alerts are not shown.
+      return { ...next, engine: event.state, activity: event.state.activity };
+    case "channel_event": {
+      const entry = event.entry;
+      if (next.entries.some((e) => e.entry_id === entry.entry_id)) return next;
+      const entries = [...next.entries, entry];
+      if (entry.level !== "flag") return { ...next, entries };
+      return {
+        ...next,
+        entries,
+        flag: entry,
+        flagCount: next.flagCount + 1,
+        timeline: push(next, {
+          sequence: event.sequence,
+          kind: "alert",
+          videoTime: entry.start_time,
+          title: `${CHANNEL_KIND_LABEL[entry.kind] ?? titleCase(entry.kind)} — for review`,
+          detail: "Flag from the provisional rules",
+          tone: "attention",
+        }),
+      };
     }
     case "recording_status":
       return { ...next, recorder: { kind: event.kind, state: event.state, frames: event.frames,
@@ -247,8 +234,8 @@ export function reducer(state: LiveState, action: Action): LiveState {
       return { ...state, snapshot: action.ready.snapshot, connection: "live" };
     case "connection":
       return { ...state, connection: action.status };
-    case "dismiss_alert":
-      return state.alert?.id === action.id ? { ...state, alert: null } : state;
+    case "dismiss_flag":
+      return state.flag?.entry_id === action.entryId ? { ...state, flag: null } : state;
     case "event":
       return applyEvent(state, action.event);
   }

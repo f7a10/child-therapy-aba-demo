@@ -1,29 +1,44 @@
-import type { Activity, Indicator, IndicatorState, SessionState } from "./types";
+import type { Activity, ChannelName, SessionState } from "./types";
 
-export const INDICATOR_LABEL: Record<Indicator, string> = {
-  orientation: "Orientation",
-  body_motion: "Body motion",
-  out_of_seat: "Out of seat",
-  hand_motion: "Hand motion",
-  posture_change: "Posture change",
+export const CHANNEL_LABEL: Record<ChannelName, string> = {
+  posture: "Posture",
+  movement: "Large movement",
+  orientation: "Facing the task",
+  context: "Context",
 };
 
-/** Describes what the proxy measures, never what it means clinically. */
-export const INDICATOR_BASIS: Record<Indicator, string> = {
-  orientation: "Head-turn proxy relative to task area",
-  body_motion: "Normalized torso and limb speed",
-  out_of_seat: "Standing after a seated baseline",
-  hand_motion: "Wrist speed relative to torso",
-  posture_change: "Confirmed sit ↔ stand transition",
+/** What each channel measures, never what it means clinically. */
+export const CHANNEL_BASIS: Record<ChannelName, string> = {
+  posture: "Sit ↔ stand from the child's own leg joints",
+  movement: "Body centre moved more than one torso length",
+  orientation: "Head turned away from the drawn task area",
+  context: "Model note on marked moments · suggestion only",
 };
 
-export const INDICATOR_STATE_LABEL: Record<IndicatorState, string> = {
-  active: "Sustained",
-  candidate: "Building",
-  inactive: "Observed · none",
-  unobservable: "Not observable",
-  not_applicable: "Not applicable",
+export const CHANNEL_KIND_LABEL: Record<string, string> = {
+  sit_to_stand: "Stood up",
+  stand_to_sit: "Sat down",
+  large_movement: "Large movement",
+  turned_away_from_task: "Turned away from task",
+  turned_back_to_task: "Turned back to task",
+  context_note: "Context note",
 };
+
+export const CONTEXT_DETAIL_LABEL: Record<string, Record<string, string>> = {
+  child_location: { at_table: "at the table", away_from_table: "away from the table", walking: "moving around", on_floor: "on the floor" },
+  child_handling_material: { yes: "holding material", no: "not holding material" },
+};
+
+/** Closed-enum context details as text; unclear answers are left out. */
+export function contextDetails(details: Record<string, string>): string {
+  if (details.child_separable === "no") return "child not separable from adult";
+  return ["child_location", "child_handling_material"]
+    .map((name) => CONTEXT_DETAIL_LABEL[name]?.[details[name] ?? ""])
+    .filter(Boolean)
+    .join(" · ");
+}
+
+export const LEVEL_LABEL: Record<"flag" | "info", string> = { flag: "For review", info: "Info" };
 
 export const SESSION_STATE_LABEL: Record<SessionState, string> = {
   created: "Created",

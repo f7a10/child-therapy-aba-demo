@@ -4,7 +4,8 @@ import { SESSION_STATE_LABEL, TERMINATION_LABEL, formatDuration } from "../lib/f
 import { TERMINAL } from "../lib/reducer";
 import type { LiveSessionController } from "../lib/useLiveSession";
 import { Controls } from "./Controls";
-import { IndicatorGrid } from "./IndicatorGrid";
+import { ChannelTiles } from "./ChannelTiles";
+import { SessionStrip } from "./SessionStrip";
 import { ActivitySwitch, CandidateCard, SessionFacts, Timeline } from "./SidePanel";
 import { Stage } from "./Stage";
 import { Card, Pill, cx } from "./ui";
@@ -19,8 +20,8 @@ export function Workspace({ live, onHome }: { live: LiveSessionController; onHom
   const stale = streamDown || terminal || lost;
   const candidate = (
     <CandidateCard
-      alert={state.alert}
-      onAcknowledge={live.dismissAlert}
+      alert={state.flag}
+      onAcknowledge={live.dismissFlag}
       unavailable={stale || state.identity === "uncertain" || state.analysisStale}
     />
   );
@@ -96,7 +97,8 @@ export function Workspace({ live, onHome }: { live: LiveSessionController; onHom
         {/* On narrow screens the candidate card sits right under the stage. */}
         <div className="lg:hidden">{candidate}</div>
 
-        <IndicatorGrid live={state} stale={stale} />
+        <ChannelTiles live={state} stale={stale} />
+        <SessionStrip entries={state.entries} duration={state.snapshot?.scenario.duration_s ?? null} videoTime={state.videoTime} />
       </div>
 
       <aside className="flex min-w-0 flex-col gap-5" aria-label="Session details">
@@ -159,7 +161,7 @@ function Summary({ live }: { live: LiveSessionController }) {
   const stats = [
     ["Video time", formatDuration(state.videoTime ?? 0)],
     ["Observations", String(state.observationCount)],
-    ["Candidates", String(state.alertCount)],
+    ["Flags", String(state.flagCount)],
     ["Analysis gaps", String(state.providerErrors)],
     ["Late results", String(state.staleCount)],
   ];

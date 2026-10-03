@@ -24,6 +24,28 @@ export type Command = "open" | "select_target" | "start" | "pause" | "resume" | 
 
 export type ProviderKind = "synthetic" | "precomputed";
 
+/** Observation channels (aba_demo/channel_events.py). */
+export type ChannelName = "posture" | "movement" | "orientation" | "context";
+export const CHANNELS: readonly ChannelName[] = ["posture", "movement", "orientation", "context"];
+
+/** One unified channel event as released by the server once confirmed (detected_time passed). */
+export interface ChannelEntry {
+  event_id: string;
+  entry_id: string;
+  channel: ChannelName;
+  kind: string;
+  origin: "measured" | "suggested";
+  start_time: number;
+  end_time: number;
+  detected_time: number;
+  evidence_times: number[];
+  clinician_confirmation: string;
+  /** Closed-enum notes of a suggested (model) channel; empty for measured channels. */
+  details: Record<string, string>;
+  activity: Activity;
+  level: "flag" | "info";
+}
+
 export interface Scenario {
   id: string;
   title: string;
@@ -32,6 +54,7 @@ export interface Scenario {
   duration_s: number | null;
   fps: number | null;
   exercises: string[];
+  channels?: ChannelName[];
 }
 
 export interface RecorderStatus {
@@ -62,6 +85,7 @@ export interface SessionSnapshot {
   termination_reason: string | null;
   provider_errors: number;
   stale_observations: number;
+  channels?: ChannelName[];
   last_sequence: number;
   scenario: Scenario;
 }
@@ -144,6 +168,7 @@ export type LiveEvent = Envelope &
         recorder: RecorderStatus;
       }
     | { event_type: "activity"; activity: Activity; video_time: number | null }
+    | { event_type: "channel_event"; video_time: number; entry: ChannelEntry }
     | { event_type: "error"; code: string; detail: string; video_time?: number; source_frame_index?: number }
   );
 

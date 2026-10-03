@@ -11,24 +11,24 @@ import {
   Repeat,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { ACTIVITY_LABEL, INDICATOR_LABEL, formatClock } from "../lib/format";
+import { ACTIVITY_LABEL, CHANNEL_KIND_LABEL, CHANNEL_LABEL, formatClock, titleCase } from "../lib/format";
 import type { LiveState, TimelineItem, Tone } from "../lib/reducer";
-import type { Activity, EngineEvent, SessionSnapshot } from "../lib/types";
+import type { Activity, ChannelEntry, SessionSnapshot } from "../lib/types";
 import { Button, Card, SectionTitle, cx } from "./ui";
 
 export function CandidateCard({ alert, onAcknowledge, unavailable }: {
-  alert: EngineEvent | null;
-  onAcknowledge: (id: number) => void;
+  alert: ChannelEntry | null;
+  onAcknowledge: (entryId: string) => void;
   unavailable: boolean;
 }) {
   return (
     <Card aria-labelledby="candidate-title" className="overflow-hidden">
-      <SectionTitle id="candidate-title">Candidate observation</SectionTitle>
+      <SectionTitle id="candidate-title">For your review</SectionTitle>
       <div aria-live="polite" className="px-5 pb-5">
         <AnimatePresence mode="wait" initial={false}>
           {alert && !unavailable ? (
             <motion.div
-              key={alert.id}
+              key={alert.entry_id}
               initial={{ opacity: 0, y: 10, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -6 }}
@@ -38,32 +38,31 @@ export function CandidateCard({ alert, onAcknowledge, unavailable }: {
               <div className="flex items-start gap-3">
                 <span className="relative mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-attention text-surface">
                   <Flag className="size-4" aria-hidden />
-                  {alert.end === null && (
-                    <span className="absolute -top-0.5 -right-0.5 size-2.5 animate-ping rounded-full bg-attention" aria-hidden />
-                  )}
                 </span>
                 <div className="min-w-0">
-                  <p className="text-lg font-semibold leading-tight tracking-tight text-ink">{INDICATOR_LABEL[alert.type]}</p>
+                  <p className="text-lg font-semibold leading-tight tracking-tight text-ink">
+                    {CHANNEL_KIND_LABEL[alert.kind] ?? titleCase(alert.kind)}
+                  </p>
                   <p className="text-sm text-attention">
-                    {alert.end === null ? "Sustained · ongoing" : `Ended at ${formatClock(alert.end)}`}
+                    {CHANNEL_LABEL[alert.channel]} · during {ACTIVITY_LABEL[alert.activity].toLowerCase()}
                   </p>
                 </div>
               </div>
               <dl className="mt-4 grid grid-cols-2 gap-3 rounded-lg bg-surface/60 p-3 font-mono text-xs tabular">
                 <div>
-                  <dt className="font-sans text-[11px] text-muted">Onset</dt>
-                  <dd className="text-ink">{formatClock(alert.start)}</dd>
+                  <dt className="font-sans text-[11px] text-muted">From</dt>
+                  <dd className="text-ink">{formatClock(alert.start_time)}</dd>
                 </div>
                 <div>
-                  <dt className="font-sans text-[11px] text-muted">Evidence</dt>
-                  <dd className="text-ink">{formatClock(alert.evidence_time)}</dd>
+                  <dt className="font-sans text-[11px] text-muted">To</dt>
+                  <dd className="text-ink">{formatClock(alert.end_time)}</dd>
                 </div>
               </dl>
               <p className="mt-3 text-xs leading-relaxed text-muted">
-                The observed signal persisted past the provisional threshold. It is a prompt for your review, not a
-                conclusion about attention, intent, or behavior function.
+                A visible change flagged by the provisional rules for this activity. It is a prompt for your review,
+                not a conclusion about attention, intent, or behavior function.
               </p>
-              <Button variant="secondary" className="mt-4 w-full" onClick={() => onAcknowledge(alert.id)}>
+              <Button variant="secondary" className="mt-4 w-full" onClick={() => onAcknowledge(alert.entry_id)}>
                 Acknowledge
               </Button>
             </motion.div>
@@ -109,7 +108,7 @@ export function SessionFacts({ live, snapshot }: { live: LiveState; snapshot: Se
         {live.recorder?.dropped_frames ? <span className="text-critical"> · {live.recorder.dropped_frames} dropped</span> : null}
       </span>,
     ],
-    ["Candidates", live.alertCount],
+    ["Flags for review", live.flagCount],
     ["Analysis gaps", <span className={live.providerErrors ? "text-critical" : undefined}>{live.providerErrors}</span>],
     [
       "Analysis p95",
