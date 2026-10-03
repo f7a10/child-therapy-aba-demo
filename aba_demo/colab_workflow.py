@@ -85,6 +85,8 @@ def _decode_scene(value):
 
 def build_context_window(evidence_rows):
     """Build one validated, target-grounded context window entirely in memory."""
+    from PIL import ImageDraw
+
     if not isinstance(evidence_rows, list) or not 1 <= len(evidence_rows) <= 4:
         raise ValueError('invalid_context_window')
     frames = []
@@ -108,10 +110,14 @@ def build_context_window(evidence_rows):
         right = math.ceil(box[2] * scene.width)
         bottom = math.ceil(box[3] * scene.height)
         crop = scene.crop((left, top, right, bottom))
+        marked_scene = scene.copy()
+        ImageDraw.Draw(marked_scene).rectangle(
+            (left, top, min(right, scene.width - 1), min(bottom, scene.height - 1)),
+            outline=(0, 255, 0), width=max(3, min(scene.size) // 60))
         frames.append({
             'time': time,
             'identity': 'confirmed',
-            'scene_jpeg': _bounded_jpeg(scene),
+            'scene_jpeg': _bounded_jpeg(marked_scene),
             'target_crop_jpeg': _bounded_jpeg(crop),
             'target_box': copy.deepcopy(box),
         })
@@ -454,12 +460,19 @@ class ReviewSession:
             raise ValueError('Pending tracking candidate binding is invalid')
         return encoded, data, digest
 
-    def _preflight_context_windows(self, windows):
+    def _preflight_context_windows(self, windows, *, previous_context_sha=None):
         """Validate every local causal dependency before any provider call."""
         tracking_bytes, tracking_data, tracking_sha = self._current_tracking_candidate()
-        if (self.context_pending.exists() or self.context_output.exists()
-                or self.context_review_report.exists() or self.context_report is not None):
-            raise ValueError('A context candidate already exists for this run')
+        if previous_context_sha is None:
+            if (self.context_pending.exists() or self.context_output.exists()
+                    or self.context_review_report.exists() or self.context_report is not None):
+                raise ValueError('A context candidate already exists for this run')
+        else:
+            if self.context_output.exists():
+                raise ValueError('Published context cannot be revised')
+            _, current_sha = self._current_context_candidate(tracking_sha)
+            if current_sha != previous_context_sha:
+                raise ValueError('Previous context digest is not the current candidate')
         if not isinstance(windows, list) or not 1 <= len(windows) <= MAX_CONTEXT_WINDOWS:
             raise ValueError('Invalid context window specifications')
         source = tracking_data['source']
@@ -534,7 +547,20 @@ class ReviewSession:
 
     def build_context_candidate(self, windows, adapter=None):
         """Invoke an explicit context adapter once per fully preflighted window."""
-        tracking_bytes, tracking_sha, duration, prepared = self._preflight_context_windows(windows)
+        return self._build_context_candidate(windows, adapter=adapter)
+
+    def revise_context_candidate(self, windows, *, previous_context_sha, adapter=None):
+        """Create a versioned replacement while keeping the old candidate intact."""
+        if not isinstance(previous_context_sha, str):
+            raise ValueError('Previous context digest is invalid')
+        return self._build_context_candidate(
+            windows, adapter=adapter, previous_context_sha=previous_context_sha)
+
+    def _build_context_candidate(self, windows, adapter=None, *, previous_context_sha=None):
+        tracking_bytes, tracking_sha, duration, prepared = self._preflight_context_windows(
+            windows, previous_context_sha=previous_context_sha)
+        prior_path = self.context_pending
+        prior_report_path = self.context_review_report
         if adapter is None:
             from .openrouter_context import OpenRouterContextAdapter
             adapter = OpenRouterContextAdapter()
@@ -571,6 +597,12 @@ class ReviewSession:
         current_tracking_bytes, _, current_tracking_sha = self._current_tracking_candidate()
         if current_tracking_bytes != tracking_bytes or current_tracking_sha != tracking_sha:
             raise ValueError('Pending tracking candidate changed during context analysis')
+        if previous_context_sha is not None:
+            _, current_context_sha = self._current_context_candidate(tracking_sha)
+            if (current_context_sha != previous_context_sha
+                    or self.context_pending != prior_path
+                    or self.context_review_report != prior_report_path):
+                raise ValueError('Previous context candidate changed during analysis')
         document = {
             'schema_version': 1,
             'source_sha256': self.source_sha256,
@@ -590,13 +622,25 @@ class ReviewSession:
             'run_id': self.run_id,
             'source_sha256': self.source_sha256,
         }
+        if previous_context_sha is None:
+            pending_path, report_path = self.context_pending, self.context_review_report
+        else:
+            if report['context_candidate_sha256'] == previous_context_sha:
+                raise ValueError('Revised context must differ from the current candidate')
+            digest = report['context_candidate_sha256']
+            pending_path = self.directory / f'context.{digest}.pending.json'
+            report_path = self.directory / f'context.{digest}.review-report.json'
+            if pending_path.exists() or report_path.exists():
+                raise ValueError('Revised context version already exists')
         try:
-            _write_bytes(self.context_pending, encoded)
-            _write_json(self.context_review_report, report)
+            _write_bytes(pending_path, encoded)
+            _write_json(report_path, report)
         except BaseException:
-            self.context_pending.unlink(missing_ok=True)
-            self.context_review_report.unlink(missing_ok=True)
+            pending_path.unlink(missing_ok=True)
+            report_path.unlink(missing_ok=True)
             raise
+        self.context_pending = pending_path
+        self.context_review_report = report_path
         self.context_report = copy.deepcopy(report)
         return copy.deepcopy(report)
 

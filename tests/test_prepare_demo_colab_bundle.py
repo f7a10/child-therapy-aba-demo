@@ -53,6 +53,18 @@ class PrepareDemoColabBundleTests(unittest.TestCase):
         self.assertEqual(set(EXPECTED_MEMBERS), allowed)
         self.assertEqual(tuple(EXPECTED_MEMBERS), load_bundle_module().BUNDLE_FILES)
 
+    def test_notebook_pin_matches_current_reviewed_bundle(self):
+        import hashlib
+        tree = ast.parse(self.cells()['bundle-code'])
+        pin = next(ast.literal_eval(n.value) for n in ast.walk(tree)
+                   if isinstance(n, ast.Assign) and any(
+                       isinstance(t, ast.Name) and t.id == 'EXPECTED_BUNDLE_SHA256'
+                       for t in n.targets))
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / 'bundle.zip'
+            load_bundle_module().create_bundle(PROJECT_ROOT, archive)
+            self.assertEqual(pin, hashlib.sha256(archive.read_bytes()).hexdigest())
+
     def test_notebook_clean_compilable_and_no_transfer_widgets(self):
         for cell in self.notebook()['cells']:
             if cell['cell_type'] == 'code':
@@ -96,6 +108,11 @@ class PrepareDemoColabBundleTests(unittest.TestCase):
         self.assertIn('OPENROUTER_API_KEY', source)
         self.assertNotIn("api_key='", source)
         self.assertNotIn('os.environ', source)
+
+    def test_context_completion_budget_is_explicit_for_reasoning_routes(self):
+        source = self.cells()['context-code']
+        self.assertIn('CONTEXT_MAX_TOKENS = 4096', source)
+        self.assertIn('max_tokens=CONTEXT_MAX_TOKENS', source)
 
     def test_install_command_surfaces_child_stderr(self):
         source = self.cells()['setup-code']

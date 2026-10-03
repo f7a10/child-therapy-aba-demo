@@ -151,6 +151,21 @@ class WorkflowTests(unittest.TestCase):
                     self.assertEqual(Image.open(io.BytesIO(frame['target_crop_jpeg'])).size,
                                      (40, 30))
 
+    def test_context_scene_visually_marks_target_without_marking_target_crop(self):
+        from PIL import Image
+
+        row = {'frame_index': 0, 'time': 0.0, 'identity': 'confirmed',
+               'image': jpeg_base64(size=(200, 160), color=(150, 50, 50)),
+               'target_box': [.25, .25, .75, .75]}
+        frame = workflow.build_context_window([row])[0]
+        scene = Image.open(io.BytesIO(frame['scene_jpeg']))
+        crop = Image.open(io.BytesIO(frame['target_crop_jpeg']))
+        border = scene.getpixel((60, 40))
+        self.assertGreater(border[1], 170)
+        self.assertLess(border[0], 110)
+        self.assertLess(crop.getpixel((10, 10))[1], 110)
+        self.assertEqual(frame['target_box'], row['target_box'])
+
     def test_context_window_rejects_invalid_counts_order_identity_box_and_jpeg(self):
         base = {'frame_index': 0, 'time': 0.0, 'identity': 'confirmed',
                 'image': jpeg_base64(), 'target_box': [.1, .2, .6, .9]}
@@ -332,6 +347,81 @@ class WorkflowTests(unittest.TestCase):
         self.assertFalse(session.context_pending.exists())
         self.assertFalse(session.context_review_report.exists())
         self.assertIsNone(session.context_report)
+
+    def test_revise_context_keeps_old_candidate_and_reuses_finished_tracking(self):
+        session = self.context_session()
+        tracking_report = finish_context_session(session)
+        old_adapter = mock.Mock()
+        old_adapter.analyze.return_value = {
+            'observation': context_observation([0.0]),
+            'provenance': context_provenance(session.source_sha256),
+        }
+        windows = [{'segment_id': 'ctx-000001', 'frame_indices': [0]}]
+        old_report = session.build_context_candidate(windows, adapter=old_adapter)
+        old_path = session.context_pending
+        old_report_path = session.context_review_report
+        old_bytes = old_path.read_bytes()
+        tracking_bytes = session.pending.read_bytes()
+
+        new_observation = context_observation([0.0])
+        new_observation['target_material_interaction'] = 'no'
+        replacement_adapter = mock.Mock()
+        replacement_adapter.analyze.return_value = {
+            'observation': new_observation,
+            'provenance': context_provenance(session.source_sha256),
+        }
+        new_report = session.revise_context_candidate(
+            windows, previous_context_sha=old_report['context_candidate_sha256'],
+            adapter=replacement_adapter)
+
+        self.assertNotEqual(new_report['context_candidate_sha256'],
+                            old_report['context_candidate_sha256'])
+        self.assertNotEqual(session.context_pending, old_path)
+        self.assertEqual(old_path.read_bytes(), old_bytes)
+        self.assertTrue(old_report_path.exists())
+        self.assertEqual(session.pending.read_bytes(), tracking_bytes)
+        self.assertEqual(json.loads(session.context_pending.read_bytes())['context_segments'][0]
+                         ['target_material_interaction'], 'no')
+        self.assertEqual(hashlib.sha256(session.context_pending.read_bytes()).hexdigest(),
+                         new_report['context_candidate_sha256'])
+        with self.assertRaisesRegex(ValueError, 'exact reviewed'):
+            session.publish_with_context(
+                tracking_report['candidate_sha256'],
+                old_report['context_candidate_sha256'], confirmed=True, reviewer='clinician')
+        published = session.publish_with_context(
+            tracking_report['candidate_sha256'],
+            new_report['context_candidate_sha256'], confirmed=True, reviewer='clinician')
+        self.assertTrue(published['context'].is_file())
+
+    def test_revise_context_failure_and_bad_sha_preserve_previous_candidate(self):
+        session = self.context_session()
+        finish_context_session(session)
+        windows = [{'segment_id': 'ctx-000001', 'frame_indices': [0]}]
+        original_adapter = mock.Mock()
+        original_adapter.analyze.return_value = {
+            'observation': context_observation([0.0]),
+            'provenance': context_provenance(session.source_sha256),
+        }
+        old_report = session.build_context_candidate(windows, adapter=original_adapter)
+        old_pending = session.context_pending
+        old_report_path = session.context_review_report
+        old_bytes = old_pending.read_bytes()
+        bad_adapter = mock.Mock()
+        with self.assertRaises(ValueError):
+            session.revise_context_candidate(
+                windows, previous_context_sha='f' * 64, adapter=bad_adapter)
+        bad_adapter.analyze.assert_not_called()
+
+        bad_adapter.analyze.side_effect = RuntimeError('private provider failure')
+        with self.assertRaisesRegex(RuntimeError, 'private provider failure'):
+            session.revise_context_candidate(
+                windows, previous_context_sha=old_report['context_candidate_sha256'],
+                adapter=bad_adapter)
+        self.assertEqual(session.context_pending, old_pending)
+        self.assertEqual(session.context_review_report, old_report_path)
+        self.assertEqual(session.context_report, old_report)
+        self.assertEqual(old_pending.read_bytes(), old_bytes)
+        self.assertEqual(len(list(session.directory.glob('*pending.json'))), 2)
 
     def test_provider_provenance_must_be_identical_across_calls(self):
         session = self.context_session()

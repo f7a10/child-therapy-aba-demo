@@ -60,9 +60,34 @@ python -m pip install "Pillow>=10,<13"
 python -m unittest discover -s tests -q
 ```
 
-The suite has **172 tests** passing locally in this repository snapshot; these
-are primarily synthetic/logic tests, not a clinical or real-video performance
-benchmark.
+These are primarily synthetic/logic tests, not a clinical or real-video
+performance benchmark. A locally edited notebook with saved outputs or target
+selections will fail the notebook cleanliness checks until it is reviewed and
+cleaned; do not erase those edits merely to make the tests green.
+
+## Local OpenRouter smoke test (synthetic only)
+
+Install Pillow as above. If you do not already have a local `.env`, create one
+from `.env.example` and set `OPENROUTER_API_KEY` to the key alone (no quotes or
+`Bearer ` prefix). Keep `.env` private: Git ignores it, but Git ignore does not
+protect files copied into archives or shared by other means. From the repository
+root, run:
+
+```bash
+python scripts/probe_openrouter_context.py
+```
+
+The default smoke-test model is `dots-studio/dots-3-note-preview:free`.
+[OpenRouter marks it as going away September 30, 2026](https://openrouter.ai/dots-studio/dots-3-note-preview%3Afree); this default is temporary.
+Select and separately validate a replacement with `--model <model-id>` when it
+is unavailable; the adapter must not silently fall back to an unreviewed
+provider or model. Adjust its completion budget with `--max-tokens` when needed.
+This **explicit command only** reads the local `.env`, sends a generated white
+64×64 JPEG scene/crop through the same strict privacy routing and output
+validator, and prints only a stable result code. It does not process recorded
+footage or evaluate observation quality. The replay server and Colab notebook
+do **not** automatically load this local `.env`; configure their runtime
+separately and never include `.env` in a Colab bundle.
 
 ## Optional recorded-video analysis
 

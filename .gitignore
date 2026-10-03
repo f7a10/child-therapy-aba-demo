@@ -5,6 +5,7 @@ __pycache__/
 venv/
 .env*
 *.env
+!.env.example
 .ipynb_checkpoints/
 
 # Private inputs, analyses, generated bundles and local work
