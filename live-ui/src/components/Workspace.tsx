@@ -95,6 +95,7 @@ export function Workspace({ live, onHome }: { live: LiveSessionController; onHom
             onCommand={(command) => live.send(command)}
             onRestart={() => state.snapshot && live.startScenario(state.snapshot.scenario.id)}
             onLeave={onHome}
+            recorded={Boolean(state.snapshot?.scenario.video)}
           />
         </Card>
 

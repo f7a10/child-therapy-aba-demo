@@ -11,6 +11,10 @@ def main() -> None:
                         help="local video for a file-as-live precomputed replay (never uploaded)")
     parser.add_argument("--replay-observations", metavar="PATH",
                         help="matching precomputed observation JSON exported for that video")
+    parser.add_argument("--library", metavar="DIR",
+                        help="folder of recorded sessions, one sub-folder with session.json each")
+    parser.add_argument("--with-simulations", action="store_true",
+                        help="also list the synthetic engineering scenarios (shell tests)")
     parser.add_argument("--replay-channel", metavar="PATH", action="append", default=[],
                         help="observation-channel document for the replayed video (repeatable)")
     args = parser.parse_args()
@@ -22,17 +26,24 @@ def main() -> None:
         import uvicorn
         from .api import DEV_UI_ORIGINS, create_app
         from .runtime import SessionManager
-        from .scenarios import ReplayScenario
+        from .scenarios import ReplayScenario, load_session_library
     except ImportError as exc:
         raise SystemExit("Live shell dependencies missing: pip install -r requirements-live.txt") from exc
     extra = ()
+    if args.library:
+        try:
+            extra = tuple(load_session_library(args.library))
+        except ValueError as exc:
+            raise SystemExit(f"Session library not available: {exc}") from exc
     if args.replay_video:
         try:
-            extra = (ReplayScenario(args.replay_video, args.replay_observations,
-                                    channels=args.replay_channel),)
+            extra += (ReplayScenario(args.replay_video, args.replay_observations,
+                                     channels=args.replay_channel),)
         except (OSError, ValueError) as exc:
             raise SystemExit(f"Replay not available: {exc}") from exc
-    app = create_app(SessionManager(extra_scenarios=extra), port=args.port,
+    include_synthetic = args.with_simulations
+    app = create_app(SessionManager(extra_scenarios=extra, include_synthetic=include_synthetic),
+                     port=args.port,
                      dev_origins=DEV_UI_ORIGINS if args.dev else ())
     print(f"ABA live-session shell (simulation): http://127.0.0.1:{args.port}", flush=True)
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")

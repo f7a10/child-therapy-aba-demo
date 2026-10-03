@@ -8,6 +8,7 @@ existing precomputed export against its matching local video (file-as-live).
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
+import re
 
 from ..engine import INDICATORS
 from ..export import file_sha256
@@ -55,7 +56,9 @@ class ReplayScenario:
     id = "precomputed-replay"
     kind = "precomputed"
 
-    def __init__(self, video, observations, channels=()):
+    def __init__(self, video, observations, channels=(), *, scenario_id=None, title=None):
+        if scenario_id is not None:
+            self.id = scenario_id
         self.video = Path(video)
         self.observations = Path(observations)
         digest = file_sha256(self.video)
@@ -72,7 +75,7 @@ class ReplayScenario:
             self._channels[name] = document
         self._source_info = provider.source
         self.build_moments()  # fails fast unless every channel matches this video and tracking
-        self.title = "Precomputed replay"
+        self.title = title or "Precomputed replay"
 
     def build(self):
         provider = PrecomputedProvider.from_file(self.observations, video_sha256=self._digest)
@@ -98,6 +101,39 @@ class ReplayScenario:
                 "fps": self._source_info.get("fps"),
                 "exercises": ["file-as-live source", "precomputed provider", "source hash binding"],
                 "channels": sorted(self._channels), "video": True}
+
+
+MANIFEST_NAME = "session.json"
+MANIFEST_KEYS = frozenset({"title", "video", "observations", "channels"})
+
+
+def load_session_library(root):
+    """Recorded sessions: every sub-folder of ``root`` holding a ``session.json`` manifest.
+
+    The manifest names the session's title, its video, its tracking (observations)
+    file and its channel documents; relative paths resolve against the folder. Each
+    session is fully validated now (video SHA, tracking and channel binding), and a
+    broken one is reported by its folder name instead of being silently skipped.
+    """
+    root = Path(root)
+    if not root.is_dir():
+        raise ValueError("session_library_not_found")
+    sessions = []
+    for folder in sorted(path for path in root.iterdir() if (path / MANIFEST_NAME).is_file()):
+        try:
+            manifest = json.loads((folder / MANIFEST_NAME).read_text(encoding="utf-8"))
+            if (not isinstance(manifest, dict) or set(manifest) != MANIFEST_KEYS
+                    or not isinstance(manifest["title"], str) or not 1 <= len(manifest["title"]) <= 120
+                    or not isinstance(manifest["channels"], list)):
+                raise ValueError("invalid_session_manifest")
+            slug = re.sub(r"[^a-z0-9]+", "-", folder.name.lower()).strip("-") or "session"
+            sessions.append(ReplayScenario(
+                folder / manifest["video"], folder / manifest["observations"],
+                channels=[folder / name for name in manifest["channels"]],
+                scenario_id=f"recorded-{slug}", title=manifest["title"]))
+        except (OSError, ValueError, TypeError, KeyError) as error:
+            raise ValueError(f"Recorded session '{folder.name}': {error}") from None
+    return sessions
 
 
 SCENARIOS = {scenario.id: scenario for scenario in (

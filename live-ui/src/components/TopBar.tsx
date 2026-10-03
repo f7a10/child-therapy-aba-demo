@@ -54,7 +54,7 @@ export function TopBar({ connection, sessionId, onHome, providerKind }: {
           <div className="flex items-center gap-3">{brand}</div>
         )}
 
-        <span
+        {providerKind && <span
           className="ms-2 hidden items-center gap-1.5 rounded-full border border-attention-line bg-attention-soft px-3 py-1 text-xs font-semibold tracking-wide text-attention sm:inline-flex"
           title={
             replay ? s.topbar.replayHint : s.topbar.simulationHint
@@ -62,7 +62,7 @@ export function TopBar({ connection, sessionId, onHome, providerKind }: {
         >
           {replay ? <FileClock className="size-3.5" aria-hidden /> : <FlaskConical className="size-3.5" aria-hidden />}
           {replay ? s.topbar.replay : s.topbar.simulation}
-        </span>
+        </span>}
 
         <div className="ms-auto flex items-center gap-4 text-xs text-muted">
           {sessionId && <span className="hidden font-mono md:inline">{sessionId}</span>}

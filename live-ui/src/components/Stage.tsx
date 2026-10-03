@@ -127,7 +127,7 @@ export function Stage({ live, stale, canSelect, onSelect, seek }: Props) {
         )}
         {state === "previewing" && (
           <Overlay key="select" tone="accent" icon={<MousePointerClick className="size-5" aria-hidden />} position="top">
-            {s.stage.select}
+            {showVideo ? s.stage.confirmRecorded : s.stage.select}
           </Overlay>
         )}
         {state === "paused" && (

@@ -145,8 +145,10 @@ class SessionRunner:
 class SessionManager:
     """In-memory registry for a single local operator. Not a multi-user service."""
 
-    def __init__(self, max_sessions=3, clock=time.monotonic, tick_hz=20.0, extra_scenarios=()):
-        self._scenarios = dict(SCENARIOS)
+    def __init__(self, max_sessions=3, clock=time.monotonic, tick_hz=20.0, extra_scenarios=(),
+                 include_synthetic=True):
+        # Synthetic scenarios are engineering tests of the shell; the product lists recorded sessions.
+        self._scenarios = dict(SCENARIOS) if include_synthetic else {}
         for scenario in extra_scenarios:
             self._scenarios[scenario.id] = scenario
         self.max_sessions = max_sessions

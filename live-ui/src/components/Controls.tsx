@@ -17,9 +17,11 @@ interface Props {
   onCommand: (command: Command) => void;
   onRestart: () => void;
   onLeave: () => void;
+  /** Recorded sessions: the child was selected during analysis, so the step is a confirmation. */
+  recorded?: boolean;
 }
 
-export function Controls({ state, pending, onCommand, onRestart, onLeave }: Props) {
+export function Controls({ state, pending, onCommand, onRestart, onLeave, recorded = false }: Props) {
   const [confirmStop, setConfirmStop] = useState(false);
   const { s } = useI18n();
   const current = STEPS.findIndex((states) => state !== null && states.includes(state));
@@ -91,7 +93,7 @@ export function Controls({ state, pending, onCommand, onRestart, onLeave }: Prop
         )}
         {state === "previewing" && (
           <Button variant="primary" icon={<Crosshair className="size-4" />} loading={busy("select_target")} onClick={() => onCommand("select_target")}>
-            {s.controls.lock}
+            {recorded ? s.controls.confirmChild : s.controls.lock}
           </Button>
         )}
         {state === "target_selected" && (

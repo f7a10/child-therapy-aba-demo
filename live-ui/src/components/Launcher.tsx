@@ -20,7 +20,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { api } from "../lib/api";
 import { SCENARIO_TEXT, useI18n } from "../lib/i18n";
-import type { Scenario } from "../lib/types";
+import { CHANNELS, type Scenario } from "../lib/types";
 import { Button, Card, Pill } from "./ui";
 
 const SCENARIO_ICON: Record<string, LucideIcon> = {
@@ -104,6 +104,10 @@ export function Launcher({ onStart, creating, error }: Props) {
         </div>
       </div>
 
+      {scenarios?.length === 0 && !loadError && (
+        <p className="mb-5 rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm text-muted">{s.launcher.empty}</p>
+      )}
+
       {(loadError || error) && (
         <p role="alert" className="mb-5 rounded-xl border border-critical/30 bg-critical-soft px-4 py-3 text-sm text-critical">
           {loadError ? s.launcher.serverDown : error}
@@ -142,7 +146,12 @@ function ScenarioCard({ scenario, index, busy, disabled, onStart }: {
 }) {
   const { s, language } = useI18n();
   const Icon = SCENARIO_ICON[scenario.id] ?? LayoutPanelTop;
-  const text = SCENARIO_TEXT[language]?.[scenario.id] ?? { title: scenario.title, summary: scenario.summary };
+  const recorded = scenario.kind === "precomputed";
+  const channelNames = CHANNELS.filter((channel) => scenario.channels?.includes(channel)).map((channel) => s.channel[channel]);
+  const text = recorded
+    ? { title: scenario.title, summary: s.launcher.recordedSummary(channelNames.join(language === "ar" ? "، " : ", ")) }
+    : SCENARIO_TEXT[language]?.[scenario.id] ?? { title: scenario.title, summary: scenario.summary };
+  const tags = recorded ? channelNames : scenario.exercises;
   return (
     <motion.div
       initial={{ opacity: 0, y: 14 }}
@@ -155,7 +164,7 @@ function ScenarioCard({ scenario, index, busy, disabled, onStart }: {
             <Icon className="size-5" aria-hidden />
           </span>
           <div className="flex flex-col items-end gap-1.5">
-            {scenario.kind === "precomputed" && <Pill tone="attention">{s.launcher.precomputed}</Pill>}
+            <Pill tone={recorded ? "positive" : "neutral"}>{recorded ? s.launcher.recordedPill : s.launcher.simulationPill}</Pill>
             {scenario.duration_s != null && (
               <span className="inline-flex items-center gap-1 font-mono text-xs text-muted" dir="ltr">
                 <Timer className="size-3.5" aria-hidden />
@@ -167,7 +176,7 @@ function ScenarioCard({ scenario, index, busy, disabled, onStart }: {
         <h3 className="mt-4 text-lg font-semibold tracking-tight">{text.title}</h3>
         <p className="mt-1.5 flex-1 text-sm leading-relaxed text-muted">{text.summary}</p>
         <div className="mt-4 flex flex-wrap gap-1.5">
-          {scenario.exercises.map((tag) => (
+          {tags.map((tag) => (
             <span key={tag} className="rounded-md bg-surface-2 px-2 py-0.5 text-[11px] text-muted">
               {tag}
             </span>
@@ -179,9 +188,9 @@ function ScenarioCard({ scenario, index, busy, disabled, onStart }: {
           onClick={onStart}
           loading={busy}
           disabled={disabled}
-          aria-label={s.launcher.launchAria(text.title)}
+          aria-label={`${recorded ? s.launcher.open : s.launcher.launch}: ${text.title}`}
         >
-          {s.launcher.launch}
+          {recorded ? s.launcher.open : s.launcher.launch}
           <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5 rtl:rotate-180" aria-hidden />
         </Button>
       </Card>
