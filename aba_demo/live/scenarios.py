@@ -104,7 +104,7 @@ SCENARIOS = {scenario.id: scenario for scenario in (
     Scenario(
         id="table-routine",
         title="Table routine",
-        summary="Mostly settled table work with a sustained orientation change and a short burst of body motion.",
+        summary="Mostly settled table work with short scripted changes. Exercises the session shell; no observation channels.",
         duration_s=60,
         script=(
             (0, "confirmed", QUIET),
@@ -120,7 +120,7 @@ SCENARIOS = {scenario.id: scenario for scenario in (
     Scenario(
         id="leaves-seat",
         title="Leaves seat",
-        summary="Target stands and leaves the seat area; body and posture cards are suppressed while out of seat.",
+        summary="The scripted child stands and leaves the seat area during table work. No observation channels.",
         duration_s=45,
         script=(
             (0, "confirmed", QUIET),
@@ -135,7 +135,7 @@ SCENARIOS = {scenario.id: scenario for scenario in (
     Scenario(
         id="brief-occlusion",
         title="Brief occlusion",
-        summary="The target is hidden for several seconds. Every indicator becomes not observable, never absent.",
+        summary="The child is hidden for several seconds: identity becomes uncertain and nothing is reported, never absent.",
         duration_s=40,
         script=(
             (0, "confirmed", QUIET),
@@ -150,7 +150,7 @@ SCENARIOS = {scenario.id: scenario for scenario in (
     Scenario(
         id="partial-visibility",
         title="Partial visibility",
-        summary="Legs and face drop out of view at times, so some indicators are unobservable while others continue.",
+        summary="Parts of the body drop out of view at times; what cannot be seen is not observable, not absent.",
         duration_s=40,
         script=(
             (0, "confirmed", QUIET),
