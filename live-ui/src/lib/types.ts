@@ -55,6 +55,8 @@ export interface Scenario {
   fps: number | null;
   exercises: string[];
   channels?: ChannelName[];
+  /** True when the server can show this session's own recorded video (replay). */
+  video?: boolean;
 }
 
 export interface RecorderStatus {

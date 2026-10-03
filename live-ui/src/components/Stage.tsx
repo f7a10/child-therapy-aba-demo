@@ -3,6 +3,8 @@ import { CirclePause, CircleSlash, MousePointerClick, ScanLine, VideoOff } from 
 import type { LiveState } from "../lib/reducer";
 import { formatClock } from "../lib/format";
 import { useI18n } from "../lib/i18n";
+import { videoMode } from "../lib/videoSync";
+import { ReplayVideo, type SeekRequest } from "./ReplayVideo";
 import { cx } from "./ui";
 
 interface Props {
@@ -10,6 +12,7 @@ interface Props {
   stale: boolean;
   canSelect: boolean;
   onSelect: () => void;
+  seek: SeekRequest | null;
 }
 
 const SEATED = { x: 800, y: 600 };
@@ -21,7 +24,7 @@ const STANDING_LEGS = "M -30 -20 L -34 110 M 30 -20 L 34 110";
  * Abstract, clearly synthetic scene. It visualizes scripted signals only:
  * there is no camera frame, pose, or detection behind it.
  */
-export function Stage({ live, stale, canSelect, onSelect }: Props) {
+export function Stage({ live, stale, canSelect, onSelect, seek }: Props) {
   const { s } = useI18n();
   const state = live.sessionState;
   const signals = live.observation?.signals;
@@ -31,10 +34,17 @@ export function Stage({ live, stale, canSelect, onSelect }: Props) {
   const position = standing ? STANDING : SEATED;
   const sourceOpen = state !== null && state !== "created";
   const replay = live.snapshot?.scenario.kind === "precomputed";
+  const sessionId = live.snapshot?.session_id;
+  // A replay shows its own recorded video instead of the drawn scene.
+  const showVideo = Boolean(live.snapshot?.scenario.video && sessionId) && videoMode(state) !== "hidden";
+  const review = showVideo && videoMode(state) === "review";
 
   return (
     <div className="stage-grid relative aspect-video overflow-hidden rounded-t-2xl text-white" dir="ltr">
-      <svg viewBox="0 0 1600 900" className={cx("absolute inset-0 size-full transition-[filter,opacity] duration-500", stale && "opacity-50 grayscale")} role="img" aria-label={s.stage.aria}>
+      {showVideo && sessionId && (
+        <ReplayVideo sessionId={sessionId} state={state} videoTime={live.videoTime} seek={seek} label={s.stage.video} />
+      )}
+      <svg viewBox="0 0 1600 900" className={cx("absolute inset-0 size-full transition-[filter,opacity] duration-500", stale && "opacity-50 grayscale", showVideo && "hidden")} role="img" aria-label={s.stage.aria}>
         {/* Task area and seat zone */}
         <g opacity={sourceOpen ? 1 : 0.35} className="transition-opacity duration-500">
           <rect x="190" y="560" width="360" height="170" rx="18" fill="rgb(255 255 255 / 0.04)" stroke="rgb(255 255 255 / 0.14)" />
@@ -69,7 +79,7 @@ export function Stage({ live, stale, canSelect, onSelect }: Props) {
           <ScanLine className="size-3.5" aria-hidden />
           {replay ? s.stage.replay : s.stage.synthetic}
         </span>
-        {stale && sourceOpen ? (
+        {stale && sourceOpen && !review ? (
           <span className="inline-flex items-center gap-2 rounded-lg bg-white/10 px-2.5 py-1.5 font-mono text-[11px] tracking-wider text-white/80 backdrop-blur">
             {state === "completed" || state === "failed" ? s.stage.ended : s.stage.stale}
           </span>
@@ -86,7 +96,7 @@ export function Stage({ live, stale, canSelect, onSelect }: Props) {
         )}
       </div>
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 bg-gradient-to-t from-black/60 to-transparent p-4 pt-12">
+      <div className={cx("pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 bg-gradient-to-t from-black/60 to-transparent p-4 pt-12", review && "hidden")}>
         <div>
           <p className="text-[11px] uppercase tracking-[0.18em] text-white/50">{s.stage.videoTime}</p>
           <p className="font-mono text-3xl font-medium tracking-tight tabular">{formatClock(live.videoTime)}</p>

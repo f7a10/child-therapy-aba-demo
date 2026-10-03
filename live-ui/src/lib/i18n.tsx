@@ -85,7 +85,8 @@ const en = {
   stage: {
     aria: "Synthetic scene visualization",
     synthetic: "SYNTHETIC SOURCE · NO VIDEO",
-    replay: "FILE-AS-LIVE · PRECOMPUTED ROWS · VIDEO NOT SHOWN",
+    replay: "RECORDED SESSION · EARLIER ANALYSIS REPLAYED",
+    video: "Recorded session video",
     ended: "SESSION ENDED · LAST KNOWN STATE",
     stale: "STALE · LAST KNOWN STATE",
     uncertain: "Identity uncertain",
@@ -150,6 +151,8 @@ const en = {
     title: "Session strip",
     empty: "Confirmed moments will appear here as the session reaches them.",
     suggestion: "Model suggestion",
+    watch: "Watch",
+    watchAria: (time: string) => `Watch the moment at ${time}`,
   },
   channel: {
     posture: "Posture",
@@ -298,7 +301,8 @@ const ar: Strings = {
   stage: {
     aria: "تمثيل مرئي مصطنع للمشهد",
     synthetic: "مصدر مصطنع · بلا فيديو",
-    replay: "إعادة تشغيل · نتائج محسوبة مسبقاً · الفيديو غير معروض",
+    replay: "جلسة مسجّلة · تحليل سابق يُعاد تشغيله",
+    video: "فيديو الجلسة المسجّلة",
     ended: "انتهت الجلسة · آخر حالة معروفة",
     stale: "قديم · آخر حالة معروفة",
     uncertain: "الهوية غير مؤكدة",
@@ -363,6 +367,8 @@ const ar: Strings = {
     title: "شريط الجلسة",
     empty: "ستظهر اللحظات المؤكدة هنا عندما تصل إليها الجلسة.",
     suggestion: "مقترح من نموذج",
+    watch: "شاهد",
+    watchAria: (time: string) => `شاهد اللحظة عند ${time}`,
   },
   channel: {
     posture: "الوضعية",

@@ -126,6 +126,14 @@ def create_app(manager: SessionManager | None = None, port: int = DEFAULT_PORT,
             raise ValueError("activity is required for set_activity and only for set_activity")
         return await manager.get(session_id).command(body.command, body.activity)
 
+    @app.get("/api/live/sessions/{session_id}/video")
+    async def session_video(session_id: str):
+        # Only a replay's own SHA-bound local file; synthetic sessions have no video.
+        video_path = getattr(manager.get(session_id).scenario, "video_path", None)
+        if video_path is None:
+            return _error(404, "This session has no video")
+        return FileResponse(video_path(), headers={"Cache-Control": "no-store"})
+
     @app.websocket("/api/live/sessions/{session_id}/events")
     async def events(websocket: WebSocket, session_id: str, after: int = Query(0, ge=0)):
         if websocket.headers.get("origin") not in allowed_origins:

@@ -9,10 +9,12 @@ import { Card, SectionTitle, cx } from "./ui";
  * the session timeline and as one line per moment. Context notes are labeled as
  * model suggestions. Only events already released by the server are shown.
  */
-export function SessionStrip({ entries, duration, videoTime }: {
+export function SessionStrip({ entries, duration, videoTime, onWatch }: {
   entries: ChannelEntry[];
   duration: number | null;
   videoTime: number | null;
+  /** Review mode only: jump the recorded video to a moment. */
+  onWatch?: (time: number) => void;
 }) {
   const { s } = useI18n();
   const groups = groupEntries(entries);
@@ -62,6 +64,15 @@ export function SessionStrip({ entries, duration, videoTime }: {
                       {notes.length > 0 && <> · <span className="italic">{s.strip.suggestion}: {notes.join(s.dir === "rtl" ? "؛ " : "; ")}</span></>}
                     </p>
                   </div>
+                  {onWatch && (
+                    <button
+                      onClick={() => onWatch(group.start_time)}
+                      aria-label={s.strip.watchAria(formatClock(group.start_time))}
+                      className="shrink-0 rounded-lg border border-line px-2.5 py-1 text-xs font-medium text-ink transition-colors hover:bg-surface-2"
+                    >
+                      {s.strip.watch}
+                    </button>
+                  )}
                 </li>
               );
             })}

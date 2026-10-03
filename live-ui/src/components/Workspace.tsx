@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowLeft, CircleAlert, CircleCheckBig, Hourglass, TriangleAlert, WifiOff, X } from "lucide-react";
 import { formatDuration } from "../lib/format";
@@ -8,12 +9,14 @@ import { Controls } from "./Controls";
 import { ChannelTiles } from "./ChannelTiles";
 import { SessionStrip } from "./SessionStrip";
 import { ActivitySwitch, CandidateCard, SessionFacts, Timeline } from "./SidePanel";
+import type { SeekRequest } from "./ReplayVideo";
 import { Stage } from "./Stage";
 import { Card, Pill, cx } from "./ui";
 
 export function Workspace({ live, onHome }: { live: LiveSessionController; onHome: () => void }) {
   const { state } = live;
   const { s, language } = useI18n();
+  const [seek, setSeek] = useState<SeekRequest | null>(null);
   const session = state.sessionState;
   const terminal = session !== null && TERMINAL.includes(session);
   const streamDown = state.connection === "reconnecting" || state.connection === "connecting";
@@ -85,7 +88,7 @@ export function Workspace({ live, onHome }: { live: LiveSessionController; onHom
         </AnimatePresence>
 
         <Card className="overflow-hidden">
-          <Stage live={state} stale={streamDown || lost || terminal} canSelect={session === "previewing" && live.pending === null} onSelect={() => live.send("select_target")} />
+          <Stage live={state} stale={streamDown || lost || terminal} canSelect={session === "previewing" && live.pending === null} onSelect={() => live.send("select_target")} seek={seek} />
           <Controls
             state={session}
             pending={live.pending}
@@ -99,7 +102,12 @@ export function Workspace({ live, onHome }: { live: LiveSessionController; onHom
         <div className="lg:hidden">{candidate}</div>
 
         <ChannelTiles live={state} stale={stale} />
-        <SessionStrip entries={state.entries} duration={state.snapshot?.scenario.duration_s ?? null} videoTime={state.videoTime} />
+        <SessionStrip
+          entries={state.entries}
+          duration={state.snapshot?.scenario.duration_s ?? null}
+          videoTime={state.videoTime}
+          onWatch={terminal && state.snapshot?.scenario.video ? (time) => setSeek({ time, nonce: Date.now() }) : undefined}
+        />
       </div>
 
       <aside className="flex min-w-0 flex-col gap-5" aria-label={s.workspace.details}>

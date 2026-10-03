@@ -137,5 +137,45 @@ class ReplayChannelTests(unittest.TestCase):
             self.assertIsNone(ReplayScenario(video, observations).build_moments())
 
 
+
+@unittest.skipUnless(all(__import__('importlib').util.find_spec(n) for n in ('fastapi', 'httpx')),
+                     'live API deps missing')
+class ReplayVideoApiTests(unittest.TestCase):
+    def test_replay_sessions_serve_their_bound_video_with_ranges_and_others_do_not(self):
+        import hashlib
+
+        from fastapi.testclient import TestClient
+
+        from aba_demo.live.api import create_app
+        from aba_demo.live.runtime import SessionManager
+        from aba_demo.live.scenarios import ReplayScenario
+        from movement_fixtures import candidate
+
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            video = folder / 'session.mp4'
+            payload = bytes(range(256)) * 4
+            video.write_bytes(payload)
+            observations = folder / 'observations.pending.json'
+            observations.write_text(json.dumps(candidate(hashlib.sha256(payload).hexdigest())),
+                                    encoding='utf-8')
+            scenario = ReplayScenario(video, observations)
+            self.assertTrue(scenario.describe()['video'])
+            base = 'http://127.0.0.1:8767'
+            headers = {'origin': base}
+            manager = SessionManager(extra_scenarios=(scenario,))
+            with TestClient(create_app(manager, port=8767), base_url=base) as client:
+                replay = client.post('/api/live/sessions', json={'scenario': 'precomputed-replay'},
+                                     headers=headers).json()['session_id']
+                whole = client.get(f'/api/live/sessions/{replay}/video')
+                self.assertEqual((whole.status_code, whole.content), (200, payload))
+                self.assertEqual(whole.headers['cache-control'], 'no-store')
+                part = client.get(f'/api/live/sessions/{replay}/video', headers={'range': 'bytes=10-19'})
+                self.assertEqual((part.status_code, part.content), (206, payload[10:20]))
+                synthetic = client.post('/api/live/sessions', json={'scenario': 'table-routine'},
+                                        headers=headers).json()['session_id']
+                self.assertEqual(client.get(f'/api/live/sessions/{synthetic}/video').status_code, 404)
+                self.assertEqual(client.get('/api/live/sessions/missing/video').status_code, 404)
+
 if __name__ == '__main__':
     unittest.main()

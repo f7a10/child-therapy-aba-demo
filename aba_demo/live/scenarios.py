@@ -78,6 +78,10 @@ class ReplayScenario:
         provider = PrecomputedProvider.from_file(self.observations, video_sha256=self._digest)
         return FileAsLiveSource(self.video), provider, FrameLedgerRecorder()
 
+    def video_path(self):
+        """The bound local video, shown to the therapist on loopback for review."""
+        return self.video
+
     def build_moments(self):
         """A fresh channel-event feed for one session, or None without channel files."""
         if not self._channels:
@@ -93,7 +97,7 @@ class ReplayScenario:
                 "duration_s": round(duration) if isinstance(duration, (int, float)) else None,
                 "fps": self._source_info.get("fps"),
                 "exercises": ["file-as-live source", "precomputed provider", "source hash binding"],
-                "channels": sorted(self._channels)}
+                "channels": sorted(self._channels), "video": True}
 
 
 SCENARIOS = {scenario.id: scenario for scenario in (
