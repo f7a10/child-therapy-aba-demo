@@ -36,6 +36,19 @@ class LegRatioTests(unittest.TestCase):
                 self.assertIsNone(leg_ratio(points))
 
 
+    def test_a_standing_reading_needs_both_knees_when_asked(self):
+        from aba_demo.posture_features import leg_ratio
+
+        one_knee = keypoints()
+        one_knee[14][2] = 0.3  # the other knee hidden behind a table or an adult
+        self.assertAlmostEqual(leg_ratio(one_knee), 0.6)  # rule off: unchanged
+        self.assertIsNone(leg_ratio(one_knee, standing_needs_both_knees=True))
+        self.assertAlmostEqual(leg_ratio(keypoints(), standing_needs_both_knees=True), 0.6)
+        seated = keypoints(knee_y=0.44)
+        seated[14][2] = 0.3
+        self.assertAlmostEqual(leg_ratio(seated, standing_needs_both_knees=True), -0.3)
+
+
 class PostureStateTests(unittest.TestCase):
     def test_states_have_a_gray_band_and_never_guess(self):
         from aba_demo.posture_features import classify_posture

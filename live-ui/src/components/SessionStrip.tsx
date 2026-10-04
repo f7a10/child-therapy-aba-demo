@@ -113,7 +113,7 @@ function ContextLines({ story }: { story: ContextStory }) {
     ) : null;
   return (
     <div className="mt-1.5 grid gap-0.5 border-s-2 border-accent/30 ps-2 text-xs text-muted">
-      {line(s.strip.before, story.before, story.experimental.before)}
+      {line(s.strip.before, [story.positionBefore && s.strip.childWas(story.positionBefore), story.before].filter(Boolean).join(" · "), story.experimental.before)}
       {story.position && (
         <p>
           <span className="text-faint">{s.strip.modelSees}:</span> <span className="text-ink">{story.position}</span>

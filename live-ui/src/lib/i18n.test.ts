@@ -61,6 +61,7 @@ describe("context v2 notes", () => {
       s,
     );
     expect(story).toEqual({
+      positionBefore: "",
       before: "البالغ اقترب",
       after: "البالغ بقي في مكانه",
       position: "واقف",

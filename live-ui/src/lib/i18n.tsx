@@ -279,6 +279,7 @@ const en = {
     before: "Before",
     after: "After",
     modelSees: "Model sees the child",
+    childWas: (position: string) => `child ${position}`,
     experimental: "experimental",
     agrees: "agrees with the measurement",
     disagrees: "needs checking: the model sees it differently",
@@ -633,6 +634,7 @@ const ar: Strings = {
     before: "قبل",
     after: "بعد",
     modelSees: "النموذج يرى الطفل",
+    childWas: (position: string) => `الطفل ${position}`,
     experimental: "تجريبي",
     agrees: "يتفق مع القياس",
     disagrees: "يحتاج تحقق: النموذج يراه بشكل مختلف",
@@ -775,6 +777,7 @@ export function contextDetails(details: Record<string, string>, s: Strings): str
 
 /** Context v2 (before / during / after) as display lines; null for v1 notes. */
 export interface ContextStory {
+  positionBefore: string;
   before: string;
   after: string;
   position: string;
@@ -788,6 +791,7 @@ export function contextStory(details: Record<string, string>, s: Strings): Conte
   const pick = (map: Record<string, string>, key: string) => (separable ? map[details[key] ?? ""] ?? "" : "");
   const opinion = details.second_opinion;
   return {
+    positionBefore: pick(s.detail.child_position_after, "child_position_before"),
     before: pick(s.detail.adult_movement, "adult_movement_before"),
     after: pick(s.detail.adult_movement, "adult_movement_after"),
     position: separable ? pick(s.detail.child_position_after, "child_position_after") : s.detail.notSeparable,

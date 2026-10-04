@@ -31,8 +31,15 @@ def _mean_y(points, indices, minimum):
     return sum(visible) / len(visible) if visible else None
 
 
-def leg_ratio(points, *, keypoint_confidence=KEYPOINT_CONFIDENCE):
-    """Return (knee y - hip y) / (hip y - shoulder y), or None when not measurable."""
+def leg_ratio(points, *, keypoint_confidence=KEYPOINT_CONFIDENCE, standing_needs_both_knees=False,
+              standing_min=STANDING_MIN_RATIO):
+    """Return (knee y - hip y) / (hip y - shoulder y), or None when not measurable.
+
+    With ``standing_needs_both_knees`` a ratio in the standing range counts only
+    when both knees are confidently seen: a knee hidden by a table or an adult is
+    often placed low by the pose model, which reads as standing. Such a reading is
+    not measurable rather than a guess (sitting readings are unaffected).
+    """
     if (not isinstance(points, list) or len(points) != 17
             or any(not isinstance(point, (list, tuple)) or len(point) < 3
                    or not all(_finite(value) for value in point[:3]) for point in points)):
@@ -42,7 +49,11 @@ def leg_ratio(points, *, keypoint_confidence=KEYPOINT_CONFIDENCE):
     knee = _mean_y(points, KNEES, keypoint_confidence)
     if shoulder is None or hip is None or knee is None or hip - shoulder < MIN_TORSO:
         return None
-    return (knee - hip) / (hip - shoulder)
+    ratio = (knee - hip) / (hip - shoulder)
+    if (standing_needs_both_knees and ratio >= standing_min
+            and sum(points[index][2] >= keypoint_confidence for index in KNEES) < len(KNEES)):
+        return None
+    return ratio
 
 
 def classify_posture(ratio, *, standing_min=STANDING_MIN_RATIO, sitting_max=SITTING_MAX_RATIO):

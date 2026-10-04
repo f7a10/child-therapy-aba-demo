@@ -39,6 +39,7 @@ class PlanTests(unittest.TestCase):
 class AnswerTests(unittest.TestCase):
     def answer(self, **changes):
         value = {'child_separable': 'yes', 'child_location': 'at_table',
+                 'child_position_before': 'seated',
                  'child_position_after': 'standing', 'adult_proximity': 'close',
                  'task_materials_near_child': 'present', 'adult_movement_before': 'stayed',
                  'materials_change_before': 'no_change', 'adult_movement_after': 'moved_away',
@@ -56,7 +57,10 @@ class AnswerTests(unittest.TestCase):
         self.assertIn('MOMENT END frame only', short.prompt)
         self.assertEqual(sorted(short.output_schema(2)['required']),
                          ['adult_proximity', 'child_location', 'child_position_after',
-                          'child_separable', 'task_materials_near_child'])
+                          'child_position_before', 'child_separable',
+                          'task_materials_near_child'])
+        self.assertIn('BEFORE frame only', full.prompt)
+        self.assertIn('MOMENT START frame only', short.prompt)
         for bad, rule in ((self.answer(adult_movement_after='guided'), 'enum'),
                           (self.answer(materials_change_after=None), 'fields'),
                           (self.answer(child_separable='no'), 'separable'),
@@ -91,6 +95,14 @@ class SecondOpinionTests(unittest.TestCase):
         self.assertEqual(second_opinion([('orientation', 'turned_away_from_task')],
                                         {'child_position_after': 'seated'}), 'unclear')
         self.assertEqual(second_opinion(stood, None), 'unclear')
+        # The start of the change is checked too: "sat down" while already seated disagrees.
+        sat = [('posture', 'stand_to_sit')]
+        self.assertEqual(second_opinion(sat, {'child_position_before': 'seated',
+                                              'child_position_after': 'seated'}), 'disagrees')
+        self.assertEqual(second_opinion(sat, {'child_position_before': 'standing',
+                                              'child_position_after': 'seated'}), 'agrees')
+        self.assertEqual(second_opinion(stood, {'child_position_before': 'on_floor',
+                                                'child_position_after': 'standing'}), 'agrees')
 
 
 
@@ -158,7 +170,7 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual((event['origin'], event['details']['second_opinion'],
                           event['details']['adult_movement_after']),
                          ('suggested', 'agrees', 'moved_away'))
-        self.assertLessEqual(len(event['details']), 8)
+        self.assertLessEqual(len(event['details']), 10)
         self.assertEqual(asked, [(asked[0][0], len(document['moments'][0]['roles']))])
         timeline = build_timeline({'context': (document, hashlib.sha256(raw).hexdigest())},
                                   segments, 12.1)

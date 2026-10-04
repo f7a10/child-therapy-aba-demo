@@ -80,13 +80,15 @@ class PostureJob:
     def __init__(self, data, tracking_sha, output_dir, *, weights_name='yolo11s-pose.pt',
                  keypoint_confidence=KEYPOINT_CONFIDENCE, standing_min_ratio=STANDING_MIN_RATIO,
                  sitting_max_ratio=SITTING_MAX_RATIO, min_stable_samples=MIN_STABLE_SAMPLES,
-                 max_gap_seconds=MAX_GAP_SECONDS, match_iou_min=MATCH_IOU_MIN):
+                 max_gap_seconds=MAX_GAP_SECONDS, match_iou_min=MATCH_IOU_MIN,
+                 standing_needs_both_knees=True):
         self.data, self.tracking_sha, self.output_dir = data, tracking_sha, Path(output_dir)
         self.config = {'weights': weights_name, 'keypoint_confidence': keypoint_confidence,
                        'standing_min_ratio': standing_min_ratio,
                        'sitting_max_ratio': sitting_max_ratio,
                        'min_stable_samples': min_stable_samples,
-                       'max_gap_seconds': max_gap_seconds, 'match_iou_min': match_iou_min}
+                       'max_gap_seconds': max_gap_seconds, 'match_iou_min': match_iou_min,
+                       'standing_needs_both_knees': standing_needs_both_knees}
         self.samples = []
 
     def step(self, number, row, index, frame, context):
@@ -97,7 +99,9 @@ class PostureJob:
             return
         target = [box['xyxy'] for box in row['boxes'] if box.get('id') == row['target_id']][0]
         points = _child_keypoints(frame.detections(), target, config['match_iou_min'])
-        ratio = leg_ratio(points, keypoint_confidence=config['keypoint_confidence'])
+        ratio = leg_ratio(points, keypoint_confidence=config['keypoint_confidence'],
+                          standing_needs_both_knees=config['standing_needs_both_knees'],
+                          standing_min=config['standing_min_ratio'])
         self.samples.append({'time': row['time'], 'frame_index': index, 'identity': 'confirmed',
                              'state': classify_posture(ratio,
                                                        standing_min=config['standing_min_ratio'],
@@ -145,6 +149,7 @@ def read_posture(video_path, candidate_path, output_dir, *, detector, weights_na
                  keypoint_confidence=KEYPOINT_CONFIDENCE, standing_min_ratio=STANDING_MIN_RATIO,
                  sitting_max_ratio=SITTING_MAX_RATIO, min_stable_samples=MIN_STABLE_SAMPLES,
                  max_gap_seconds=MAX_GAP_SECONDS, match_iou_min=MATCH_IOU_MIN,
+                 standing_needs_both_knees=True,
                  frame_reader_factory=SequentialFrameReader, progress=None,
                  repository_root=REPOSITORY_ROOT):
     """Write ``posture.pending.json`` and ``posture-report.json``; return counts only."""
@@ -155,6 +160,7 @@ def read_posture(video_path, candidate_path, output_dir, *, detector, weights_na
                      keypoint_confidence=keypoint_confidence,
                      standing_min_ratio=standing_min_ratio, sitting_max_ratio=sitting_max_ratio,
                      min_stable_samples=min_stable_samples, max_gap_seconds=max_gap_seconds,
-                     match_iou_min=match_iou_min)
+                     match_iou_min=match_iou_min,
+                     standing_needs_both_knees=standing_needs_both_knees)
     return run_pass(Path(video_path), data, [job], detector=detector,
                     frame_reader_factory=frame_reader_factory, progress=progress)[0]

@@ -28,7 +28,7 @@ EVENT_KEYS = frozenset({'event_id', 'channel', 'kind', 'origin', 'start_time', '
                         'details'})
 ORIGINS = ('measured', 'suggested')
 MAX_EVIDENCE_TIMES = 8
-MAX_DETAILS = 8
+MAX_DETAILS = 10
 _TOKEN = re.compile(r'[a-z][a-z_]{0,39}')
 
 

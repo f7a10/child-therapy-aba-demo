@@ -25,6 +25,7 @@ from .openrouter_context import VisualTask
 from .posture_schema import CLINICIAN_CONFIRMATIONS
 
 ROLES = ('before', 'start', 'end', 'after')
+SCHEMA_VERSION = 2  # 2 adds child_position_before; version 1 documents stay readable
 LEAD_SECONDS = 3.0
 # A before/after frame is searched within this distance of the moment, nearest to LEAD_SECONDS.
 MIN_GAP_SECONDS, MAX_GAP_SECONDS = 1.0, 5.0
@@ -33,6 +34,8 @@ MATERIAL_CHANGES = ('added', 'removed', 'no_change', 'not_observable')
 FIELD_VALUES = {
     'child_separable': ('yes', 'no'),
     'child_location': ('at_table', 'away_from_table', 'walking', 'on_floor', 'not_observable'),
+    'child_position_before': ('seated', 'standing', 'walking', 'on_floor', 'held_by_adult',
+                              'not_observable'),
     'child_position_after': ('seated', 'standing', 'walking', 'on_floor', 'held_by_adult',
                              'not_observable'),
     'adult_proximity': ('close', 'farther', 'no_adult_visible', 'not_observable'),
@@ -63,6 +66,9 @@ parts are the green-outlined child's and which belong to the red-outlined people
 or seated at a table; away_from_table if the child is upright away from any table; walking if
 the child is visibly stepping between these frames; on_floor if sitting, lying or crawling on
 the floor; not_observable if it cannot be seen.
+""",
+    'child_position_before': """child_position_before ({first} frame only): the same choices as
+child_position_after, for where the child's body was before the moment.
 """,
     'child_position_after': """child_position_after ({settled} frame only): seated on a chair or
 seat; standing; walking (mid-step, moving); on_floor; held_by_adult if an adult is carrying or
@@ -95,9 +101,11 @@ _ROLE_TEXT = {'before': 'BEFORE (about 3 s before the moment)', 'start': 'MOMENT
               'end': 'MOMENT END', 'after': 'AFTER (about 3 s after the moment)'}
 
 
-def fields_for(roles):
-    """The questions a window with these frame roles can answer."""
+def fields_for(roles, version=None):
+    """The questions a window with these frame roles can answer (v1 had no before position)."""
     fields = list(BASE_FIELDS)
+    if (version or SCHEMA_VERSION) >= 2:
+        fields.insert(2, 'child_position_before')
     if 'before' in roles:
         fields += ['adult_movement_before', 'materials_change_before']
     if 'after' in roles:
@@ -109,13 +117,14 @@ def prompt_for(roles):
     layout = ', '.join(f'{position} = {_ROLE_TEXT[role]}' for position, role in enumerate(roles))
     # The settled position is read after the change; without an AFTER frame, at its end.
     settled = 'AFTER' if 'after' in roles else 'MOMENT END'
+    first = 'BEFORE' if 'before' in roles else 'MOMENT START'
     return (_INTRO.format(count=len(roles), layout=layout)
-            + ''.join(_QUESTIONS[name].replace('{settled}', settled)
+            + ''.join(_QUESTIONS[name].replace('{settled}', settled).replace('{first}', first)
                       for name in fields_for(roles)) + _OUTRO)
 
 
-def valid_observation(value, roles):
-    fields = fields_for(roles)
+def valid_observation(value, roles, version=None):
+    fields = fields_for(roles, version)
     return (isinstance(value, dict) and set(value) == set(fields)
             and all(value[name] in FIELD_VALUES[name] for name in fields)
             and (value['child_separable'] == 'yes'
@@ -163,6 +172,11 @@ def task_for(roles):
 PROMPT_TEMPLATE_SHA256 = hashlib.sha256(
     json.dumps({str(roles): prompt_for(roles) for roles in LAYOUTS},
                sort_keys=True).encode('utf-8')).hexdigest()
+# Version 1 prompts (no before position), kept so earlier readings still validate.
+PROMPT_SHA_BY_VERSION = {
+    1: '749b97fc4e7391e633358009c8f98c79b72b3cfee5a903f536775b5ba91271b2',
+    2: PROMPT_TEMPLATE_SHA256,
+}
 
 
 def _binding_runs(audit):
@@ -230,25 +244,31 @@ def plan_v2_frames(data, moment_frames):
     return [role for role, _ in planned], [item for _, item in planned]
 
 
-# Measured change -> positions at the moment's end that agree / disagree with it.
+# Measured change -> (position field, positions that agree, positions that disagree).
 _EXPECTED = {
-    ('posture', 'sit_to_stand'): ({'standing', 'walking'}, {'seated', 'on_floor'}),
-    ('posture', 'stand_to_sit'): ({'seated'}, {'standing', 'walking'}),
-    ('movement', 'large_movement'): ({'walking', 'standing'}, {'seated'}),
+    ('posture', 'sit_to_stand'): (('child_position_after', {'standing', 'walking'}, {'seated', 'on_floor'}),
+                                  ('child_position_before', {'seated', 'on_floor'}, {'standing', 'walking'})),
+    ('posture', 'stand_to_sit'): (('child_position_after', {'seated'}, {'standing', 'walking'}),
+                                  ('child_position_before', {'standing', 'walking'}, {'seated', 'on_floor'})),
+    ('movement', 'large_movement'): (('child_position_after', {'walking', 'standing'}, {'seated'}),),
 }
 
 
 def second_opinion(anchor_kinds, observation):
-    """'agrees', 'disagrees' or 'unclear' for the measured changes of a moment."""
-    position = (observation or {}).get('child_position_after')
+    """'agrees', 'disagrees' or 'unclear' for the measured changes of a moment.
+
+    The model's view of the child before and after the change is compared with the
+    change itself, e.g. "sat down" while already seated before disagrees.
+    """
+    observation = observation or {}
     verdicts = []
     for kind in anchor_kinds:
-        expected = _EXPECTED.get(kind)
-        if expected is None or position in (None, 'not_observable', 'held_by_adult'):
-            continue
-        agree, disagree = expected
-        verdicts.append('agrees' if position in agree else
-                        'disagrees' if position in disagree else 'unclear')
+        for field, agree, disagree in _EXPECTED.get(kind, ()):
+            position = observation.get(field)
+            if position in (None, 'not_observable', 'held_by_adult'):
+                continue
+            verdicts.append('agrees' if position in agree else
+                            'disagrees' if position in disagree else 'unclear')
     if 'disagrees' in verdicts:
         return 'disagrees'
     return 'agrees' if verdicts and all(v == 'agrees' for v in verdicts) else 'unclear'
@@ -257,10 +277,9 @@ def second_opinion(anchor_kinds, observation):
 # ----- document (pending, source- and tracking-bound) -----
 
 DOCUMENT_KIND = 'context_v2_reading'
-SCHEMA_VERSION = 1
 MAX_FRAMES_PER_MOMENT = len(ROLES)
-# Shown with each note (the event's ``details``, at most 8 short tokens with second_opinion).
-DETAIL_FIELDS = ('child_separable', 'child_location', 'child_position_after',
+# Shown with each note (the event's ``details``, with second_opinion at most 10 short tokens).
+DETAIL_FIELDS = ('child_separable', 'child_location', 'child_position_before', 'child_position_after',
                  'adult_movement_before', 'adult_movement_after',
                  'materials_change_before', 'materials_change_after')
 SECOND_OPINIONS = ('agrees', 'disagrees', 'unclear')
@@ -288,7 +307,7 @@ def _sha(value):
     return isinstance(value, str) and len(value) == 64 and set(value) <= set('0123456789abcdef')
 
 
-def _valid_moment(moment, decoded, segments):
+def _valid_moment(moment, decoded, segments, version):
     if not isinstance(moment, dict) or set(moment) != MOMENT_KEYS:
         return False
     roles, times = moment['roles'], moment['frame_times']
@@ -314,7 +333,7 @@ def _valid_moment(moment, decoded, segments):
     kinds = [(a['channel'], a['kind']) for a in moment['anchors']]
     if moment['status'] == 'read':
         return (moment['failure'] is None
-                and valid_observation(moment['observation'], tuple(roles))
+                and valid_observation(moment['observation'], tuple(roles), version)
                 and moment['second_opinion'] == second_opinion(kinds, moment['observation']))
     return (moment['status'] == 'unread' and moment['observation'] is None
             and moment['second_opinion'] is None
@@ -342,7 +361,7 @@ def validate_context_v2_document(document, source_duration):
     try:
         config = document['config']
         if (not isinstance(document, dict) or set(document) != DOCUMENT_KEYS
-                or document['schema_version'] != SCHEMA_VERSION
+                or document['schema_version'] not in PROMPT_SHA_BY_VERSION
                 or document['kind'] != DOCUMENT_KIND
                 or not _sha(document['source_sha256'])
                 or not _sha(document['tracking_candidate_sha256'])
@@ -353,7 +372,8 @@ def validate_context_v2_document(document, source_duration):
                 or not isinstance(config['model'], str) or not _NAME.fullmatch(config['model'])
                 or not isinstance(config['provider'], str)
                 or not _NAME.fullmatch(config['provider'])
-                or config['prompt_template_sha256'] != PROMPT_TEMPLATE_SHA256
+                or config['prompt_template_sha256']
+                != PROMPT_SHA_BY_VERSION[document['schema_version']]
                 or config['max_frames_per_moment'] != MAX_FRAMES_PER_MOMENT
                 or not isinstance(document['moments'], list)
                 or len(document['moments']) > MAX_MOMENTS):
@@ -361,7 +381,8 @@ def validate_context_v2_document(document, source_duration):
         segments = document['activity_segments']
         _validate_segments(segments, document['decoded_seconds'])
         moments = document['moments']
-        if (not all(_valid_moment(m, document['decoded_seconds'], segments) for m in moments)
+        if (not all(_valid_moment(m, document['decoded_seconds'], segments,
+                                  document['schema_version']) for m in moments)
                 or len({m['moment_id'] for m in moments}) != len(moments)
                 or any(b['start_time'] < a['start_time'] for a, b in zip(moments, moments[1:]))):
             raise ValueError

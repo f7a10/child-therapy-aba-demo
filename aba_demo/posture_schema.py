@@ -37,7 +37,10 @@ def _sha(value):
 
 
 def _valid_config(config):
-    return (isinstance(config, dict) and set(config) == CONFIG_KEYS
+    # Readings from before the both-knees rule have no such key (rule off).
+    return (isinstance(config, dict)
+            and set(config) in (CONFIG_KEYS, CONFIG_KEYS | {'standing_needs_both_knees'})
+            and type(config.get('standing_needs_both_knees', False)) is bool
             and isinstance(config['weights'], str) and 1 <= len(config['weights']) <= 128
             and _finite(config['keypoint_confidence']) and 0 < config['keypoint_confidence'] < 1
             and _finite(config['standing_min_ratio']) and _finite(config['sitting_max_ratio'])
