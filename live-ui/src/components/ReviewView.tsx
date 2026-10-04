@@ -98,7 +98,8 @@ export function ReviewView({ sessionId, onHome }: { sessionId: string; onHome: (
             </dl>
           </header>
 
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+          {/* The moments sit beside the video and scroll within its height, so watching one needs no page scroll. */}
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_400px]">
             <Card className="overflow-hidden">
               <video
                 ref={video}
@@ -121,19 +122,21 @@ export function ReviewView({ sessionId, onHome }: { sessionId: string; onHome: (
               </div>
             </Card>
 
-            <Card aria-labelledby="channels-summary">
-              <SectionTitle id="channels-summary">{s.review.channelsTitle}</SectionTitle>
-              <ul className="grid gap-2 px-4 pb-4">
-                {CHANNELS.map((channel) => (
-                  <ChannelRow key={channel} channel={channel} review={review} videoTime={videoTime} />
-                ))}
-              </ul>
-            </Card>
+            <div className="relative min-w-0">
+              <div className="xl:absolute xl:inset-0">
+                <SessionStrip entries={entries} duration={review.duration} videoTime={videoTime} onWatch={watch} hideBar fill title={s.review.momentsTitle} />
+              </div>
+            </div>
           </div>
 
-          <div className="mt-6">
-            <SessionStrip entries={entries} duration={review.duration} videoTime={videoTime} onWatch={watch} hideBar title={s.review.momentsTitle} />
-          </div>
+          <Card aria-labelledby="channels-summary" className="mt-6">
+            <SectionTitle id="channels-summary">{s.review.channelsTitle}</SectionTitle>
+            <ul className="grid gap-3 px-4 pb-4 sm:grid-cols-2 xl:grid-cols-4">
+              {CHANNELS.map((channel) => (
+                <ChannelRow key={channel} channel={channel} review={review} videoTime={videoTime} />
+              ))}
+            </ul>
+          </Card>
         </>
       )}
     </motion.main>
@@ -162,19 +165,19 @@ function ChannelRow({ channel, review, videoTime }: { channel: ChannelName; revi
   return (
     <li
       className={cx(
-        "rounded-xl border p-3",
+        "min-w-0 rounded-xl border p-3",
         !loaded ? "hatched border-dashed border-line-strong" : flagged ? "border-attention-line bg-attention-soft/50" : "border-line",
       )}
     >
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-start gap-2.5">
         <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-surface-2 text-muted">
           <Icon className="size-4" aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
           <p className="font-semibold leading-tight">{s.channel[channel]}</p>
-          <p className="truncate text-[11px] text-faint">{s.basis[channel]}</p>
+          <p className="text-[11px] leading-snug text-faint">{s.basis[channel]}</p>
         </div>
-        {loaded && <span className={cx("text-xs font-medium", count ? "text-ink" : "text-muted")}>{s.review.events(count)}</span>}
+        {loaded && <span className={cx("shrink-0 pt-0.5 text-xs font-medium", count ? "text-ink" : "text-muted")}>{s.review.events(count)}</span>}
       </div>
       <div className="mt-2 text-xs text-muted">
         {!loaded ? (

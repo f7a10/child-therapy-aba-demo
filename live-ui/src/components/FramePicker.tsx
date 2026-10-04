@@ -1,7 +1,10 @@
 import { useRef, useState } from "react";
 import type { PointerEvent } from "react";
+import { boxesAt } from "../lib/selection";
 import type { FrameBox } from "../lib/types";
 import { cx } from "./ui";
+
+export { boxesAt };
 
 export type Region = [number, number, number, number];
 export interface Click {
@@ -10,17 +13,12 @@ export interface Click {
   boxId: number;
 }
 
-/** The boxes under a normalized point (the server applies the same rule). */
-export function boxesAt(boxes: FrameBox[], x: number, y: number): FrameBox[] {
-  return boxes.filter((b) => b.xyxy[0] <= x && x <= b.xyxy[2] && b.xyxy[1] <= y && y <= b.xyxy[3]);
-}
-
 /**
  * One analysis frame with every tracked person boxed. A click inside exactly one
  * box chooses that person; in drawing mode a drag draws the task area instead.
  * Image coordinates always run left to right, whatever the reading direction.
  */
-export function FramePicker({ src, width, height, boxes, click, onClick, drawing, region, onRegion, alt }: {
+export function FramePicker({ src, width, height, boxes, click, onClick, drawing, region, onRegion, alt, candidates = [], focus = null }: {
   src: string;
   width: number;
   height: number;
@@ -31,9 +29,14 @@ export function FramePicker({ src, width, height, boxes, click, onClick, drawing
   region: Region | null;
   onRegion: (region: Region) => void;
   alt: string;
+  /** After a click on overlapping people: their boxes, numbered so the therapist can name one. */
+  candidates?: number[];
+  focus?: number | null;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<{ x: number; y: number; x2: number; y2: number } | null>(null);
+  // The one box under the pointer, outlined so the therapist sees what a click would choose.
+  const [hover, setHover] = useState<number | null>(null);
 
   const point = (event: PointerEvent) => {
     const rect = ref.current!.getBoundingClientRect();
@@ -53,8 +56,12 @@ export function FramePicker({ src, width, height, boxes, click, onClick, drawing
     setDrag({ x: p.x, y: p.y, x2: p.x, y2: p.y });
   };
   const onMove = (event: PointerEvent) => {
-    if (!drag) return;
     const p = point(event);
+    if (!drag) {
+      const hits = drawing ? [] : boxesAt(boxes, p.x, p.y);
+      setHover(hits.length === 1 ? hits[0]!.id : null);
+      return;
+    }
     setDrag({ ...drag, x2: p.x, y2: p.y });
   };
   const onUp = () => {
@@ -78,24 +85,38 @@ export function FramePicker({ src, width, height, boxes, click, onClick, drawing
     <div
       ref={ref}
       dir="ltr"
-      className={cx("relative w-full touch-none select-none overflow-hidden rounded-xl bg-black", drawing ? "cursor-crosshair" : "cursor-pointer")}
-      style={{ aspectRatio: `${width} / ${height}` }}
+      className={cx("relative mx-auto touch-none select-none overflow-hidden rounded-xl bg-black", drawing ? "cursor-crosshair" : "cursor-pointer")}
+      // Tall (phone) videos are limited to the window height instead of filling the width.
+      style={{ aspectRatio: `${width} / ${height}`, width: `min(100%, calc(72dvh * ${width / height}))` }}
       onPointerDown={onDown}
       onPointerMove={onMove}
       onPointerUp={onUp}
+      onPointerLeave={() => setHover(null)}
     >
       <img src={src} alt={alt} className="absolute inset-0 size-full object-contain" draggable={false} />
       {boxes.map((box) => {
         const chosen = click?.boxId === box.id;
+        const candidate = candidates.indexOf(box.id);
+        const hovered = !chosen && (focus === box.id || (focus === null && hover === box.id));
         return (
           <span
             key={box.id}
             className={cx(
               "pointer-events-none absolute rounded-sm border-2 transition-colors",
-              chosen ? "border-positive bg-positive/15 shadow-[0_0_0_2px_rgb(0_0_0/0.35)]" : "border-white/80 bg-white/5",
+              chosen
+                ? "border-positive bg-positive/15 shadow-[0_0_0_2px_rgb(0_0_0/0.35)]"
+                : hovered
+                  ? "border-[#f2c979] bg-[#f2c979]/15 shadow-[0_0_0_2px_rgb(0_0_0/0.35)]"
+                  : "border-white/85 bg-white/5 shadow-[0_0_0_1px_rgb(0_0_0/0.45)]",
             )}
             style={style(box.xyxy)}
-          />
+          >
+            {candidate >= 0 && (
+              <span className="absolute top-1 left-1 grid size-6 place-items-center rounded-full bg-[#f2c979] text-xs font-bold text-black shadow">
+                {candidate + 1}
+              </span>
+            )}
+          </span>
         );
       })}
       {shown && (

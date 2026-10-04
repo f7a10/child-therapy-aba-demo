@@ -1,7 +1,9 @@
-import { FileClock, FlaskConical, Languages } from "lucide-react";
+import { FileClock, FlaskConical, Languages, Monitor, Moon, Sun } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useI18n } from "../lib/i18n";
 import type { ProviderKind } from "../lib/types";
 import type { Connection } from "../lib/reducer";
+import { useTheme, type Theme } from "../lib/theme";
 import { cx } from "./ui";
 
 const CONNECTION_DOT: Record<Connection, string> = {
@@ -11,6 +13,8 @@ const CONNECTION_DOT: Record<Connection, string> = {
   reconnecting: "bg-attention animate-pulse",
   closed: "bg-faint",
 };
+
+const THEME_ICON: Record<Theme, LucideIcon> = { system: Monitor, light: Sun, dark: Moon };
 
 export function BrandMark({ className }: { className?: string }) {
   return (
@@ -30,6 +34,8 @@ export function TopBar({ connection, sessionId, canGoHome, onHome, providerKind 
   providerKind: ProviderKind | null;
 }) {
   const { s, toggle } = useI18n();
+  const { theme, cycle } = useTheme();
+  const ThemeIcon = THEME_ICON[theme];
   const replay = providerKind === "precomputed";
   const brand = (
     <>
@@ -73,6 +79,14 @@ export function TopBar({ connection, sessionId, canGoHome, onHome, providerKind 
               {s.topbar.connection[connection]}
             </span>
           )}
+          <button
+            onClick={cycle}
+            aria-label={s.topbar.theme[theme]}
+            title={s.topbar.theme[theme]}
+            className="grid size-8 place-items-center rounded-lg border border-line text-ink transition-colors hover:bg-surface-2"
+          >
+            <ThemeIcon className="size-3.5" aria-hidden />
+          </button>
           <button
             onClick={toggle}
             aria-label={s.topbar.switchLabel}

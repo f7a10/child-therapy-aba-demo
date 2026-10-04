@@ -13,7 +13,7 @@ import {
   UserCheck,
 } from "lucide-react";
 import { analysis, ApiError, api, library } from "../lib/api";
-import { formatDuration } from "../lib/format";
+import { formatLength } from "../lib/format";
 import { SCENARIO_TEXT, useI18n } from "../lib/i18n";
 import { CHANNELS, type AnalysisStatus, type LibrarySession, type Scenario } from "../lib/types";
 import { Button, Card, Pill, cx } from "./ui";
@@ -217,9 +217,9 @@ function LibraryList({ sessions, onReview }: { sessions: LibrarySession[] | null
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{session.title}</span>
                   <span className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
-                    <span className="inline-flex items-center gap-1 font-mono" dir="ltr">
+                    <span className="inline-flex items-center gap-1 tabular" dir="ltr">
                       <Timer className="size-3.5" aria-hidden />
-                      {formatDuration(session.duration)}
+                      {formatLength(session.duration)}
                     </span>
                     <span>{s.activity[session.activity]}</span>
                     <span>{CHANNELS.filter((c) => session.channels.includes(c)).map((c) => s.channel[c]).join(language === "ar" ? "، " : ", ")}</span>

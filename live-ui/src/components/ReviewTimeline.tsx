@@ -39,13 +39,18 @@ export function ReviewTimeline({ review, videoTime, onSeek }: {
         {CHANNELS.map((channel) => (
           <Lane key={channel} channel={channel} review={review} at={at} seek={seek} videoTime={videoTime} />
         ))}
-        <div className="grid grid-cols-[132px_1fr] gap-3">
-          <span />
+        <div className="grid gap-3 sm:grid-cols-[132px_1fr]">
+          <span className="hidden sm:block" />
           <div className="relative h-5 font-mono text-[10px] text-faint" dir="ltr">
             {ticks.map((tick) => (
               <span
                 key={tick}
-                className={cx("absolute top-0", tick === 0 ? "" : tick === 1 ? "-translate-x-full" : "-translate-x-1/2")}
+                className={cx(
+                  "absolute top-0",
+                  tick === 0 ? "" : tick === 1 ? "-translate-x-full" : "-translate-x-1/2",
+                  // Narrow screens keep only the start, middle and end, so the labels never collide.
+                  (tick === 0.25 || tick === 0.75) && "hidden sm:block",
+                )}
                 style={{ left: `${tick * 100}%` }}
               >
                 {formatClock(tick * span).replace(/\.\d$/, "")}
@@ -89,7 +94,7 @@ function Lane({ channel, review, at, seek, videoTime }: {
   const entries = review.entries.filter((entry) => entry.channel === channel);
   const reason = review.skipped[channel];
   return (
-    <div className="grid grid-cols-[132px_1fr] items-center gap-3">
+    <div className="grid items-center gap-1 sm:grid-cols-[132px_1fr] sm:gap-3">
       <span className="truncate text-xs font-medium text-muted">{s.channel[channel]}</span>
       {loaded ? (
         <div

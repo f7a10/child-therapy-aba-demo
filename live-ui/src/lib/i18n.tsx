@@ -25,6 +25,7 @@ const en = {
     simulationHint: "Synthetic source and observations. No camera, no model inference, nothing is recorded.",
     switchTo: "العربية",
     switchLabel: "Switch the interface to Arabic",
+    theme: { system: "Theme: system", light: "Theme: light", dark: "Theme: dark" } as Record<"system" | "light" | "dark", string>,
     connection: {
       idle: "No session",
       connecting: "Connecting",
@@ -144,6 +145,12 @@ const en = {
     reselectBody: (time: string) =>
       `Tracking paused at ${time}. Click the child to continue, or skip ahead while the child is out of view.`,
     chosen: "Child selected",
+    stepChild: "Click the child on the frame",
+    stepDetails: "Session details",
+    redraw: "Redraw task area",
+    whichPerson: "That point is inside more than one person. Which one is the child?",
+    person: (n: number) => `Person ${n}`,
+    noFreePoint: "This person is fully covered by someone else on this frame. Skip ahead to a clearer frame.",
     notChosen: "No child selected yet",
     sessionTitle: "Session title",
     activity: "Activity in this video",
@@ -380,6 +387,7 @@ const ar: Strings = {
     simulationHint: "مصدر وملاحظات مصطنعة. لا كاميرا ولا نموذج ولا تسجيل.",
     switchTo: "English",
     switchLabel: "Switch the interface to English",
+    theme: { system: "المظهر: حسب الجهاز", light: "المظهر: فاتح", dark: "المظهر: داكن" },
     connection: {
       idle: "لا توجد جلسة",
       connecting: "جارٍ الاتصال",
@@ -499,6 +507,12 @@ const ar: Strings = {
     reselectBody: (time: string) =>
       `توقف التتبع عند ${time}. اضغط على الطفل للمتابعة، أو تقدّم قليلاً إذا كان الطفل خارج الصورة.`,
     chosen: "تم تحديد الطفل",
+    stepChild: "اضغط على الطفل في الإطار",
+    stepDetails: "تفاصيل الجلسة",
+    redraw: "أعد رسم منطقة المهمة",
+    whichPerson: "هذه النقطة داخل أكثر من شخص. أيّهم الطفل؟",
+    person: (n: number) => `الشخص ${n}`,
+    noFreePoint: "هذا الشخص مغطّى بالكامل بشخص آخر في هذا الإطار. تقدّم إلى إطار أوضح.",
     notChosen: "لم يُحدَّد الطفل بعد",
     sessionTitle: "عنوان الجلسة",
     activity: "النشاط في هذا الفيديو",
