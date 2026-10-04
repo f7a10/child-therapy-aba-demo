@@ -73,7 +73,7 @@ export function AnalysisView({ jobId, onHome, onReview }: {
 
       {(status?.state === "select" || status?.state === "reselect") && status.frame && (
         <Selector
-          key={`${status.state}-${status.frame.version}`}
+          key={status.state}
           status={status}
           error={error && errorText(error)}
           onSelect={(selection) => act(analysis.select(jobId, selection))}
@@ -116,6 +116,12 @@ function Selector({ status, error, onSelect, onSkip, onContinue, onCancel }: {
   const [title, setTitle] = useState(status.title);
   const [drawing, setDrawing] = useState(false);
   const [region, setRegion] = useState<Region | null>(null);
+
+  // A new frame (after skipping ahead) clears the click; the session settings stay.
+  useEffect(() => {
+    setClick(null);
+    setHint(null);
+  }, [frame.version]);
 
   const choose = (x: number, y: number) => {
     const hits = boxesAt(frame.boxes, x, y);
@@ -214,6 +220,9 @@ function Selector({ status, error, onSelect, onSkip, onContinue, onCancel }: {
             <p className="rounded-lg bg-surface-2 px-3 py-2 text-xs leading-relaxed text-muted">{s.analysis.contextNote}</p>
             <Button variant="primary" size="lg" disabled={!click || !title.trim()} onClick={submit}>
               {s.analysis.start}
+            </Button>
+            <Button variant="secondary" onClick={onSkip}>
+              {s.analysis.skip}
             </Button>
           </>
         ) : (

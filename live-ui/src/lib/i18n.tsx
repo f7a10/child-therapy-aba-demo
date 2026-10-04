@@ -139,7 +139,7 @@ const en = {
     title: "New analysis",
     preparing: "Opening the video and loading the model…",
     selectTitle: "Click the child you will observe",
-    selectBody: "Every person found on the first frame has a box. Click inside the child's box.",
+    selectBody: "Every person found on this frame has a box. Click inside the child's box, or skip ahead if the child is not in view yet.",
     reselectTitle: "The child was lost — click the child again",
     reselectBody: (time: string) =>
       `Tracking paused at ${time}. Click the child to continue, or skip ahead while the child is out of view.`,
@@ -493,7 +493,7 @@ const ar: Strings = {
     title: "تحليل جديد",
     preparing: "جارٍ فتح الفيديو وتحميل النموذج…",
     selectTitle: "اضغط على الطفل الذي ستلاحظه",
-    selectBody: "كل شخص ظاهر في الإطار الأول عليه مربع. اضغط داخل مربع الطفل.",
+    selectBody: "كل شخص ظاهر في هذا الإطار عليه مربع. اضغط داخل مربع الطفل، أو تقدّم إذا لم يظهر الطفل بعد.",
     reselectTitle: "فُقد الطفل — اضغط عليه مرة أخرى",
     reselectBody: (time: string) =>
       `توقف التتبع عند ${time}. اضغط على الطفل للمتابعة، أو تقدّم قليلاً إذا كان الطفل خارج الصورة.`,

@@ -84,6 +84,80 @@ def clicked_box(boxes, x, y):
     return hits[0]
 
 
+TAIL_PROBE_FRAMES = 90
+
+
+def decodable_frame_count(path, frame_count, *, window=TAIL_PROBE_FRAMES):
+    """Frames that really decode: container metadata often counts a few extra at the end."""
+    import cv2
+
+    capture = cv2.VideoCapture(str(path))
+    try:
+        start = max(0, frame_count - window)
+        if start:
+            capture.set(cv2.CAP_PROP_POS_FRAMES, start)
+        position = int(capture.get(cv2.CAP_PROP_POS_FRAMES)) if start else 0
+        decoded = 0
+        while capture.read()[0]:
+            decoded += 1
+        return position + decoded
+    finally:
+        capture.release()
+
+
+def tail_checked_analyzer(video, config):
+    """The reviewed ``VideoAnalyzer``, ending at the last frame that really decodes.
+
+    Only when the unreadable tail is longer than the reviewed tolerance
+    (``MAX_TRAILING_DECODE_GAP_FRAMES``) is the frame count lowered to the decoded
+    count, so tracking can finish instead of failing at the very end; recordings
+    within the tolerance are left exactly as before.
+    """
+    from ..vision import VideoAnalyzer
+
+    analyzer = VideoAnalyzer(video, config)
+    try:
+        decodable = decodable_frame_count(video, analyzer.frame_count)
+        if 0 < decodable < analyzer.frame_count - MAX_TRAILING_DECODE_GAP_FRAMES:
+            analyzer.frame_count = decodable
+            analyzer.duration = decodable / analyzer.fps
+    except BaseException:
+        analyzer.close()
+        raise
+    return analyzer
+
+
+def skip_before_selection(session, time):
+    """Before the first selection, decode forward to ``time`` attributing nothing.
+
+    For recordings that open on a title card or an empty room. Every frame passed
+    goes through the session's own causal audit with no target (identity uncertain,
+    reason ``select_target``); selecting the child later never backfills them.
+    """
+    own = getattr(session, 'skip_unselected', None)
+    if own is not None:
+        return own(time)
+    if session.initial_selection is not None:
+        raise ValueError('target_already_selected')
+    session._open()
+    analyzer = session.analyzer
+    desired = int(math.floor(time * analyzer.fps + 1e-8))
+    if not analyzer.frame_index < desired < analyzer.frame_count:
+        raise ValueError('skip_outside_recording')
+    try:
+        if not session.audit:
+            # The opening frame was only previewed: audit it too, so the audit stays dense.
+            session._record(analyzer.analyze(analyzer.frame_index / analyzer.fps))
+        for index in range(analyzer.frame_index + 1, desired + 1):
+            session._record(analyzer.analyze(index / analyzer.fps))
+        session.preview = analyzer.preview()
+    except BaseException:
+        session.failed = True
+        analyzer.close()
+        raise
+    return session.preview
+
+
 def valid_region(region):
     return (isinstance(region, (list, tuple)) and len(region) == 4
             and all(isinstance(v, (int, float)) and math.isfinite(v) and 0 <= v <= 1 for v in region)
@@ -113,7 +187,8 @@ class Pipeline:
             return self._review_session(video, tracking_config(self.weights, self.device), output_root)
         from ..colab_workflow import ReviewSession
 
-        return ReviewSession(video, tracking_config(self.weights, self.device), output_root)
+        return ReviewSession(video, tracking_config(self.weights, self.device), output_root,
+                             analyzer_factory=tail_checked_analyzer)
 
     def detector(self):
         if self._detector is None:
@@ -234,7 +309,7 @@ class AnalysisJob:
         self._commands.put(command)
 
     def skip(self):
-        if self.state != 'reselect':
+        if self.state not in ACTIVE_WAITS:
             raise ValueError('not_waiting_for_selection')
         self._commands.put({'type': 'skip'})
 
@@ -280,7 +355,7 @@ class AnalysisJob:
             command = self._commands.get()
             if command['type'] == 'cancel' or self._cancelled.is_set():
                 raise AnalysisCancelled()
-            if state == 'select' and command['type'] != 'select':
+            if state == 'select' and command['type'] not in ('select', 'skip'):
                 continue
             return command
 
@@ -294,6 +369,14 @@ class AnalysisJob:
                 raise ValueError('video_unreadable') from error
             self._show(session.preview)
             command = self._wait('select')
+            while command['type'] == 'skip':
+                # The child is not in view yet (title card, empty room): look further on.
+                analyzer = session.analyzer
+                time = analyzer.frame_index / analyzer.fps + SKIP_SECONDS
+                last = (analyzer.frame_count - 2 - MAX_TRAILING_DECODE_GAP_FRAMES) / analyzer.fps
+                if time <= last:
+                    self._show(skip_before_selection(session, time))
+                command = self._wait('select')
             self.settings = {key: command[key] for key in ('activity', 'task_region')}
             self._set(title=command['title'])
             self._stage('tracking', 'running')
@@ -312,15 +395,22 @@ class AnalysisJob:
             self._write_manifest(Path(report['pending']), channels, skipped)
             self._set(session_id=self._on_done(self.folder), state='done', stage=None, progress=None)
         except AnalysisCancelled:
+            self._close(session)
             self._finish_failed('cancelled', None)
         except Exception as error:  # reported as a short code only
+            self._close(session)
             self._finish_failed('failed', _code(error))
         finally:
-            if session is not None:
-                try:
-                    session.close()
-                except Exception:
-                    pass
+            self._close(session)
+
+    @staticmethod
+    def _close(session):
+        # Release the video file before its folder is removed (Windows keeps open files).
+        if session is not None:
+            try:
+                session.close()
+            except Exception:
+                pass
 
     def _finish_failed(self, state, code):
         with self._lock:

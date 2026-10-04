@@ -57,6 +57,13 @@ class FakeReviewSession:
         if not self.audit or self.audit[-1]['identity'] == 'confirmed':
             self.audit.append({'identity': 'confirmed', 'reason': None})
 
+    def skip_unselected(self, time_s):
+        assert not self.selections
+        self.analyzer.frame_index = int(math.floor(time_s * self.analyzer.fps + 1e-8))
+        self.audit.append({'identity': 'uncertain', 'reason': 'select_target'})
+        self._update_preview()
+        return self.preview
+
     def advance(self, time_s):
         self.analyzer.frame_index = int(math.floor(time_s * self.analyzer.fps + 1e-8))
         if self.lost_at is not None and time_s >= self.lost_at and len(self.selections) == 1:
@@ -259,6 +266,32 @@ class AnalysisJobTests(unittest.TestCase):
             self.assertFalse(job.folder.exists())
 
 
+class SelectLaterTests(unittest.TestCase):
+    def test_the_child_can_be_selected_after_skipping_an_empty_opening(self):
+        sessions = []
+
+        class Recording(FakeReviewSession):
+            def __init__(self, *args):
+                super().__init__(*args)
+                sessions.append(self)
+
+        with tempfile.TemporaryDirectory() as directory:
+            _, manager = make_manager(Path(directory), session_class=Recording)
+            job = upload(manager)
+            status = wait_for(job, 'select')
+            version = status['frame']['version']
+            job.skip()
+            end = time.monotonic() + 10
+            while job.status()['frame']['version'] == version:
+                self.assertLess(time.monotonic(), end)
+                time.sleep(0.01)
+            self.assertEqual(job.status()['frame']['time'], 2.0)
+            job.select(*CHILD_CLICK, activity='table')
+            self.assertEqual(wait_for(job, 'done', 'failed')['state'], 'done')
+            self.assertEqual(sessions[0].selections[0][0], 20)  # selected on the later frame
+            self.assertEqual(sessions[0].audit[0]['reason'], 'select_target')
+
+
 class AnalysisApiTests(unittest.TestCase):
     def test_upload_select_and_review_over_http(self):
         from fastapi.testclient import TestClient
@@ -322,6 +355,76 @@ class ReviewSummaryTests(unittest.TestCase):
         context = channel_summary('context', {'moments': [{'status': 'read'}, {'status': 'unread'}]}, 1)
         self.assertEqual(context, {'moments': 2, 'read': 1})
 
+
+
+class TailCheckTests(unittest.TestCase):
+    def test_a_long_unreadable_tail_ends_tracking_at_the_last_real_frame(self):
+        from unittest import mock
+
+        from aba_demo.live import analysis
+
+        class Analyzer:
+            fps, frame_count, duration = 10.0, 100, 10.0
+
+            def __init__(self, video, config):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        for decodable, expected in ((95, 95), (98, 100), (100, 100)):
+            with mock.patch('aba_demo.vision.VideoAnalyzer', Analyzer),                     mock.patch.object(analysis, 'decodable_frame_count', return_value=decodable):
+                analyzer = analysis.tail_checked_analyzer('video.mp4', {})
+            self.assertEqual((analyzer.frame_count, analyzer.duration),
+                             (expected, expected / 10.0))
+
+
+class SkipWithReviewedSessionTests(unittest.TestCase):
+    def test_skipping_before_selection_keeps_a_dense_valid_audit(self):
+        from aba_demo.colab_workflow import ReviewSession
+        from aba_demo.live.analysis import skip_before_selection
+        from aba_demo.movement_windows import load_tracking_candidate
+        from aba_demo.vision import SIGNALS
+
+        class Analyzer:
+            """Synthetic decoder: the child (tracker id 2) is visible from frame 0."""
+            def __init__(self, path, config):
+                self.fps, self.frame_count, self.duration = 10, 51, 5.1
+                self.frame_index, self.target_id = -1, None
+
+            def preview(self):
+                self.frame_index = max(0, self.frame_index)
+                return {'image': '', 'time': self.frame_index / self.fps, 'boxes': []}
+
+            def select_target(self, x, y):
+                self.target_id = 2
+                return {'identity': 'confirmed', 'target_id': 2}
+
+            def analyze(self, time):
+                self.frame_index = round(time * self.fps)
+                confirmed = self.target_id == 2
+                return {'time': time, 'identity': 'confirmed' if confirmed else 'uncertain',
+                        'signals': dict.fromkeys(SIGNALS, False if confirmed else None),
+                        'values': {'identity_reason': None if confirmed else 'select_target'},
+                        'boxes': [{'id': 2, 'xyxy': [0.1, 0.2, 0.4, 0.9]}],
+                        'target_box': [0.1, 0.2, 0.4, 0.9] if confirmed else None}
+
+            def close(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as directory:
+            video = Path(directory) / 'clip.mp4'
+            video.write_bytes(b'synthetic')
+            session = ReviewSession(video, {}, Path(directory) / 'runs', analyzer_factory=Analyzer)
+            skip_before_selection(session, 1.0)
+            skip_before_selection(session, 2.0)
+            session.select([0.2, 0.5], expected_target_id=2, confirmed=True)
+            session.finish(max_uncertain_fraction=0.5)
+            data, _ = load_tracking_candidate(session.pending)
+            audit = data['provenance']['causal_audit']
+            self.assertEqual([row['frame_index'] for row in audit], list(range(51)))
+            self.assertEqual({row['reason'] for row in audit[:20]}, {'select_target'})
+            self.assertEqual(data['provenance']['initial_selection']['frame_index'], 20)
 
 if __name__ == '__main__':
     unittest.main()
