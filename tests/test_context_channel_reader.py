@@ -248,5 +248,103 @@ class ContextReaderTests(unittest.TestCase):
         self.assertIn('READ 1', printed.getvalue())
         self.assertNotIn('sk-or-test-not-real', printed.getvalue())
 
+
+class ConcurrentAdapter:
+    """Thread-safe fake provider that records how many requests overlap."""
+
+    def __init__(self, *, fail_first=None, delay=0.05):
+        import threading
+        from aba_demo.context_channel_schema import CONTEXT_TASKS
+
+        self.task = CONTEXT_TASKS['table']
+        self.lock = threading.Lock()
+        self.active = self.peak = self.calls = 0
+        self.fail_first, self.delay = fail_first, delay
+
+    def analyze(self, frames, *, source_sha256):
+        import time
+        from aba_demo.openrouter_context import OpenRouterContextError
+
+        with self.lock:
+            self.calls += 1
+            number = self.calls
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+        try:
+            if self.fail_first and number == 1:
+                raise OpenRouterContextError(self.fail_first, None)
+            time.sleep(self.delay)
+            return {'observation': observation('table'),
+                    'provenance': {'resolved_model': 'deepseek/deepseek-v4.1-flash-0731',
+                                   'endpoint_provider': 'Wafer'}}
+        finally:
+            with self.lock:
+                self.active -= 1
+
+
+class ParallelContextTests(unittest.TestCase):
+    """Moments sent together: same document, shared request cap, terminal errors stop the rest."""
+    setUp, tearDown = ContextReaderTests.setUp, ContextReaderTests.tearDown
+    write = ContextReaderTests.write
+
+    def three_moments(self):
+        from aba_demo.posture_features import classify_posture, posture_events
+
+        tracking = self.write('observations.pending.json', candidate(self.source, decoded=120))
+        tracking_sha = hashlib.sha256(tracking.read_bytes()).hexdigest()
+        ratios = ([0.6] * 6 + [-0.3] * 6) * 2
+        samples = [{'time': index * 0.5, 'frame_index': index * 5, 'identity': 'confirmed',
+                    'state': classify_posture(ratio), 'leg_ratio': ratio}
+                   for index, ratio in enumerate(ratios)]
+        document = posture_for(self.source, tracking_sha, decoded_seconds=12.0)
+        document['samples'] = samples
+        document['events'] = [{'event_id': f'pos-{number:06d}', **event,
+                               'clinician_confirmation': 'pending'}
+                              for number, event in enumerate(posture_events(samples))]
+        return tracking, self.write('posture.pending.json', document)
+
+    def read(self, adapter, tracking, posture, output, **options):
+        from aba_demo.context_channel_reader import read_context
+
+        return read_context(self.video, tracking, [posture], self.folder / output,
+                            {'table': adapter}, model='deepseek/deepseek-v4.1-flash',
+                            provider='Wafer', frame_reader_factory=FakeReader,
+                            activity_segments=[{'start_time': 0.0, 'end_time': 12.0,
+                                                'activity': 'table'}], **options)
+
+    def test_parallel_requests_write_the_same_document(self):
+        tracking, posture = self.three_moments()
+        alone = self.read(ConcurrentAdapter(), tracking, posture, 'alone', max_requests=3)
+        adapter = ConcurrentAdapter()
+        done = []
+        together = self.read(adapter, tracking, posture, 'together', max_requests=3,
+                             max_parallel=3, progress=lambda d, t: done.append((d, t)))
+        self.assertEqual(alone['moments'], 3)
+        self.assertEqual((together['read'], together['requests_used']), (3, 3))
+        self.assertGreater(adapter.peak, 1)
+        self.assertEqual(sorted(done), [(1, 3), (2, 3), (3, 3)])
+        name = 'context_channel.pending.json'
+        self.assertEqual((self.folder / 'together' / name).read_bytes(),
+                         (self.folder / 'alone' / name).read_bytes())
+
+    def test_a_terminal_error_stops_requests_not_yet_started(self):
+        from aba_demo.context_channel_reader import read_context
+        from aba_demo.openrouter_context import OpenRouterContextError
+
+        tracking, posture = self.three_moments()
+        adapter = ConcurrentAdapter(fail_first='provider_credit_exhausted', delay=0.2)
+        with self.assertRaises(OpenRouterContextError) as raised:
+            self.read(adapter, tracking, posture, 'stopped', max_requests=3, max_parallel=2,
+                      min_request_interval=0.05)
+        self.assertLessEqual(raised.exception.requests_used, 3)
+        self.assertLess(adapter.calls, 3)
+        self.assertFalse((self.folder / 'stopped' / 'context_channel.pending.json').exists())
+        with self.assertRaisesRegex(ValueError, 'invalid_reading_parameters'):
+            read_context(self.video, tracking, [posture], self.folder / 'bad',
+                         {'table': ConcurrentAdapter()}, model='m/x', provider='Wafer',
+                         max_requests=3, max_parallel=9,
+                         activity_segments=[{'start_time': 0.0, 'end_time': 12.0,
+                                             'activity': 'table'}])
+
 if __name__ == '__main__':
     unittest.main()

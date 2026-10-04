@@ -13,10 +13,10 @@ import hashlib
 import json
 from pathlib import Path
 
+from .channel_pass import check_output_dir, load_bound_candidate, run_pass
 from .colab_workflow import _write_bytes
-from .export import file_sha256
 from .movement_frames import SequentialFrameReader
-from .movement_windows import decoded_seconds, load_tracking_candidate
+from .movement_windows import decoded_seconds
 from .posture_features import (
     KEYPOINT_CONFIDENCE, MAX_GAP_SECONDS, MIN_STABLE_SAMPLES, SITTING_MAX_RATIO,
     STANDING_MIN_RATIO, classify_posture, leg_ratio, posture_events)
@@ -73,69 +73,64 @@ def _child_keypoints(detections, target_box, match_iou_min):
     return detection['keypoints'] if score >= match_iou_min else None
 
 
-def read_posture(video_path, candidate_path, output_dir, *, detector, weights_name='yolo11s-pose.pt',
+class PostureJob:
+    """Posture over the samples of one pass (see ``channel_pass``)."""
+    PENDING, REPORT = 'posture.pending.json', 'posture-report.json'
+
+    def __init__(self, data, tracking_sha, output_dir, *, weights_name='yolo11s-pose.pt',
                  keypoint_confidence=KEYPOINT_CONFIDENCE, standing_min_ratio=STANDING_MIN_RATIO,
                  sitting_max_ratio=SITTING_MAX_RATIO, min_stable_samples=MIN_STABLE_SAMPLES,
-                 max_gap_seconds=MAX_GAP_SECONDS, match_iou_min=MATCH_IOU_MIN,
-                 frame_reader_factory=SequentialFrameReader, progress=None,
-                 repository_root=REPOSITORY_ROOT):
-    """Write ``posture.pending.json`` and ``posture-report.json``; return counts only."""
-    video_path, output_dir = Path(video_path), Path(output_dir).resolve()
-    if output_dir.is_relative_to(Path(repository_root).resolve()):
-        raise ValueError('output_inside_repository')
-    pending = output_dir / 'posture.pending.json'
-    report_path = output_dir / 'posture-report.json'
-    if pending.exists() or report_path.exists():
-        raise ValueError('posture_candidate_exists')
-    data, tracking_sha = load_tracking_candidate(candidate_path)
-    source = data['source']
-    if file_sha256(video_path) != source['sha256']:
-        raise ValueError('video_does_not_match_tracking_candidate')
-    config = {'weights': weights_name, 'keypoint_confidence': keypoint_confidence,
-              'standing_min_ratio': standing_min_ratio, 'sitting_max_ratio': sitting_max_ratio,
-              'min_stable_samples': min_stable_samples, 'max_gap_seconds': max_gap_seconds,
-              'match_iou_min': match_iou_min}
-    frame_of_time = {row['time']: row['frame_index'] for row in data['provenance']['causal_audit']}
-    rows = sorted(data['observations'], key=lambda row: row['time'])
-    samples = []
-    reader = frame_reader_factory(video_path)
-    try:
-        for number, row in enumerate(rows):
-            index = frame_of_time[row['time']]
-            if samples and index <= samples[-1]['frame_index']:
-                raise ValueError('invalid_tracking_candidate')
-            if row['identity'] != 'confirmed':
-                samples.append({'time': row['time'], 'frame_index': index,
-                                'identity': 'uncertain', 'state': None, 'leg_ratio': None})
-                continue
-            target = [box['xyxy'] for box in row['boxes'] if box.get('id') == row['target_id']][0]
-            points = _child_keypoints(detector.detect(reader.read(index)), target, match_iou_min)
-            ratio = leg_ratio(points, keypoint_confidence=keypoint_confidence)
-            samples.append({'time': row['time'], 'frame_index': index, 'identity': 'confirmed',
-                            'state': classify_posture(ratio, standing_min=standing_min_ratio,
-                                                      sitting_max=sitting_max_ratio),
-                            'leg_ratio': ratio})
-            if progress and (number + 1) % 100 == 0:
-                progress(number + 1, len(rows))
-    finally:
-        reader.close()
-    if file_sha256(video_path) != source['sha256']:
-        raise ValueError('video_changed_during_reading')
-    events = [{'event_id': f'pos-{number:06d}', **event, 'clinician_confirmation': 'pending'}
-              for number, event in enumerate(posture_events(
-                  samples, min_stable_samples=min_stable_samples,
-                  max_gap_seconds=max_gap_seconds))]
-    document = {'schema_version': 1, 'kind': 'posture_reading', 'source_sha256': source['sha256'],
-                'tracking_candidate_sha256': tracking_sha, 'config': config,
-                'decoded_seconds': decoded_seconds(data), 'samples': samples, 'events': events}
-    encoded = encode_posture_document(document, source['duration'])
-    report = {
-        'posture_candidate_sha256': hashlib.sha256(encoded).hexdigest(),
-        'tracking_candidate_sha256': tracking_sha, 'source_sha256': source['sha256'],
-        'state_counts': dict(sorted(Counter(sample['state'] or 'identity_uncertain'
-                                            for sample in samples).items())),
-        'event_counts': dict(sorted(Counter(event['kind'] for event in events).items())),
-    }
+                 max_gap_seconds=MAX_GAP_SECONDS, match_iou_min=MATCH_IOU_MIN):
+        self.data, self.tracking_sha, self.output_dir = data, tracking_sha, Path(output_dir)
+        self.config = {'weights': weights_name, 'keypoint_confidence': keypoint_confidence,
+                       'standing_min_ratio': standing_min_ratio,
+                       'sitting_max_ratio': sitting_max_ratio,
+                       'min_stable_samples': min_stable_samples,
+                       'max_gap_seconds': max_gap_seconds, 'match_iou_min': match_iou_min}
+        self.samples = []
+
+    def step(self, number, row, index, frame, context):
+        config = self.config
+        if row['identity'] != 'confirmed':
+            self.samples.append({'time': row['time'], 'frame_index': index,
+                                 'identity': 'uncertain', 'state': None, 'leg_ratio': None})
+            return
+        target = [box['xyxy'] for box in row['boxes'] if box.get('id') == row['target_id']][0]
+        points = _child_keypoints(frame.detections(), target, config['match_iou_min'])
+        ratio = leg_ratio(points, keypoint_confidence=config['keypoint_confidence'])
+        self.samples.append({'time': row['time'], 'frame_index': index, 'identity': 'confirmed',
+                             'state': classify_posture(ratio,
+                                                       standing_min=config['standing_min_ratio'],
+                                                       sitting_max=config['sitting_max_ratio']),
+                             'leg_ratio': ratio})
+
+    def finish(self):
+        data, samples, config = self.data, self.samples, self.config
+        source = data['source']
+        events = [{'event_id': f'pos-{number:06d}', **event, 'clinician_confirmation': 'pending'}
+                  for number, event in enumerate(posture_events(
+                      samples, min_stable_samples=config['min_stable_samples'],
+                      max_gap_seconds=config['max_gap_seconds']))]
+        document = {'schema_version': 1, 'kind': 'posture_reading',
+                    'source_sha256': source['sha256'],
+                    'tracking_candidate_sha256': self.tracking_sha, 'config': config,
+                    'decoded_seconds': decoded_seconds(data), 'samples': samples,
+                    'events': events}
+        encoded = encode_posture_document(document, source['duration'])
+        report = {
+            'posture_candidate_sha256': hashlib.sha256(encoded).hexdigest(),
+            'tracking_candidate_sha256': self.tracking_sha, 'source_sha256': source['sha256'],
+            'state_counts': dict(sorted(Counter(sample['state'] or 'identity_uncertain'
+                                                for sample in samples).items())),
+            'event_counts': dict(sorted(Counter(event['kind'] for event in events).items())),
+        }
+        write_job_output(self.output_dir, self.PENDING, encoded, self.REPORT, report)
+        return report
+
+
+def write_job_output(output_dir, pending_name, encoded, report_name, report):
+    """Write a pending document and its count report; never leave half of the pair."""
+    pending, report_path = output_dir / pending_name, output_dir / report_name
     output_dir.mkdir(parents=True, exist_ok=True)
     try:
         _write_bytes(pending, encoded)
@@ -144,4 +139,22 @@ def read_posture(video_path, candidate_path, output_dir, *, detector, weights_na
         pending.unlink(missing_ok=True)
         report_path.unlink(missing_ok=True)
         raise
-    return report
+
+
+def read_posture(video_path, candidate_path, output_dir, *, detector, weights_name='yolo11s-pose.pt',
+                 keypoint_confidence=KEYPOINT_CONFIDENCE, standing_min_ratio=STANDING_MIN_RATIO,
+                 sitting_max_ratio=SITTING_MAX_RATIO, min_stable_samples=MIN_STABLE_SAMPLES,
+                 max_gap_seconds=MAX_GAP_SECONDS, match_iou_min=MATCH_IOU_MIN,
+                 frame_reader_factory=SequentialFrameReader, progress=None,
+                 repository_root=REPOSITORY_ROOT):
+    """Write ``posture.pending.json`` and ``posture-report.json``; return counts only."""
+    output_dir = check_output_dir(output_dir, (PostureJob.PENDING, PostureJob.REPORT),
+                                  repository_root, 'posture_candidate_exists')
+    data, tracking_sha = load_bound_candidate(video_path, candidate_path)
+    job = PostureJob(data, tracking_sha, output_dir, weights_name=weights_name,
+                     keypoint_confidence=keypoint_confidence,
+                     standing_min_ratio=standing_min_ratio, sitting_max_ratio=sitting_max_ratio,
+                     min_stable_samples=min_stable_samples, max_gap_seconds=max_gap_seconds,
+                     match_iou_min=match_iou_min)
+    return run_pass(Path(video_path), data, [job], detector=detector,
+                    frame_reader_factory=frame_reader_factory, progress=progress)[0]

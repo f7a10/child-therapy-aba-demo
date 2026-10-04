@@ -9,11 +9,12 @@ pose model uses the local GPU):
    lost and identity latches, the job pauses on the current frame for the
    therapist to click the child again (never automatic), skip ahead while the
    child is out of view, or continue without further prompts.
-3. The local channels run on the tracking file (posture, large movement, and
-   orientation when a task area was drawn), then the context channel sends its
-   sparse moments to the configured provider (always on in the site: approved
-   by the project owner; privacy flags unchanged). A context failure leaves the
-   local channels intact.
+3. The local channels read the tracking file in one pass over the video
+   (posture, large movement, and orientation when a task area was drawn; same
+   results as separate runs), then the context channel sends its sparse moments
+   to the configured provider, several requests at a time (always on in the
+   site: approved by the project owner; privacy flags unchanged). A context
+   failure leaves the local channels intact.
 4. The session folder gets its ``session.json`` and joins the library.
 
 The therapist's commands reach the worker through a queue; the worker is the only
@@ -35,6 +36,8 @@ from ..export import MAX_TRAILING_DECODE_GAP_FRAMES
 from .scenarios import MANIFEST_NAME
 
 STAGES = ('tracking', 'posture', 'movement', 'orientation', 'context')
+LOCAL_FILES = {'posture': 'posture.pending.json', 'movement': 'large_movement.pending.json',
+               'orientation': 'orientation.pending.json'}
 VIDEO_SUFFIXES = frozenset({'.mp4', '.m4v', '.mov', '.webm'})
 MAX_UPLOAD_BYTES = 8 * 1024 ** 3
 # Tracking advances in steps so a lost child is noticed within about a second.
@@ -44,6 +47,8 @@ SKIP_SECONDS = 2.0
 # reselection). Unconfirmed time is never measured by any channel.
 MAX_UNCERTAIN_FRACTION = 0.25
 MAX_RESELECTIONS = 12
+# Context requests waiting on the provider at once (the moments are independent).
+CONTEXT_PARALLEL = 4
 TERMINAL = frozenset({'done', 'failed', 'cancelled'})
 ACTIVE_WAITS = frozenset({'select', 'reselect'})
 
@@ -130,12 +135,9 @@ class Pipeline:
         if self._readers is not None:
             return self._readers
         from ..context_channel_reader import read_context
-        from ..large_movement_reader import read_large_movement
-        from ..orientation_reader import read_orientation
-        from ..posture_reader import read_posture
+        from ..local_channels import read_local_channels
 
-        return {'posture': read_posture, 'movement': read_large_movement,
-                'orientation': read_orientation, 'context': read_context}
+        return {'local': read_local_channels, 'context': read_context}
 
     def context_adapters(self):
         """One adapter per activity, or ContextUnavailable with a short code."""
@@ -373,32 +375,33 @@ class AnalysisJob:
     def _channels(self, pending):
         readers = self.pipeline.readers()
         channels, skipped = {}, {}
-        local = [
-            ('posture', 'posture.pending.json', {}),
-            ('movement', 'large_movement.pending.json',
-             {'motion_estimator': self.pipeline.motion_estimator()}),
-        ]
+        outputs = {'posture': self.folder / 'posture', 'movement': self.folder / 'movement'}
         if self.settings['task_region'] is not None:
-            local.append(('orientation', 'orientation.pending.json',
-                          {'task_region': self.settings['task_region']}))
+            outputs['orientation'] = self.folder / 'orientation'
         else:
             self._stage('orientation', 'skipped', 'no_task_region')
             skipped['orientation'] = 'no_task_region'
-        for name, filename, options in local:
+        # One pass over the video feeds every local channel (same results as separate runs).
+        for name in outputs:
             self._stage(name, 'running')
-            try:
-                readers[name](self.video, pending, self.folder / name,
-                              detector=self.pipeline.detector(),
-                              weights_name=self.pipeline.weights.name,
-                              progress=self._progress, **options)
-            except AnalysisCancelled:
-                raise
-            except Exception as error:
-                self._stage(name, 'failed', _code(error))
-                skipped[name] = _code(error)
-                continue
-            channels[name] = self.folder / name / filename
-            self._stage(name, 'done')
+        try:
+            reports, errors = readers['local'](
+                self.video, pending, outputs, detector=self.pipeline.detector(),
+                task_region=self.settings['task_region'],
+                weights_name=self.pipeline.weights.name,
+                motion_estimator=self.pipeline.motion_estimator(), progress=self._progress)
+        except AnalysisCancelled:
+            raise
+        except Exception as error:
+            reports, errors = {}, dict.fromkeys(outputs, error)
+        for name in outputs:
+            if name in reports:
+                channels[name] = outputs[name] / LOCAL_FILES[name]
+                self._stage(name, 'done')
+            else:
+                code = _code(errors.get(name) or ValueError('channel_not_produced'))
+                self._stage(name, 'failed', code)
+                skipped[name] = code
         self._context(readers['context'], pending, channels, skipped)
         return channels, skipped
 
@@ -425,7 +428,8 @@ class AnalysisJob:
                 return
             read_context(self.video, pending, list(channels.values()), self.folder / 'context',
                          adapters, max_requests=2 * plan['moments'],
-                         min_request_interval=2.0, rate_limit_wait=30.0,
+                         min_request_interval=1.0, rate_limit_wait=30.0,
+                         max_parallel=CONTEXT_PARALLEL,
                          progress=self._progress, **options)
         except AnalysisCancelled:
             raise

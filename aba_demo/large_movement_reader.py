@@ -16,19 +16,17 @@ the machine.
 
 from collections import Counter
 import hashlib
-import json
 from pathlib import Path
 
-from .colab_workflow import _write_bytes
-from .export import file_sha256
+from .channel_pass import check_output_dir, load_bound_candidate, run_pass
 from .large_movement_features import (
     DISPLACEMENT_THRESHOLD, KEYPOINT_CONFIDENCE, MAX_CAMERA_SCALE_CHANGE, MAX_CAMERA_SHIFT,
     MAX_GAP_SECONDS, MERGE_GAP_SECONDS, WINDOW_SECONDS, body_centre, large_movement_events,
     sample_states, valid_camera)
 from .large_movement_schema import encode_large_movement_document
 from .movement_frames import SequentialFrameReader
-from .movement_windows import decoded_seconds, load_tracking_candidate
-from .posture_reader import MATCH_IOU_MIN, _child_keypoints
+from .movement_windows import decoded_seconds
+from .posture_reader import MATCH_IOU_MIN, _child_keypoints, write_job_output
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -107,6 +105,93 @@ def _continuity(audit):
     return counts
 
 
+class LargeMovementJob:
+    """Large movement over the samples of one pass (see ``channel_pass``)."""
+    PENDING, REPORT = 'large_movement.pending.json', 'large_movement-report.json'
+
+    def __init__(self, data, tracking_sha, output_dir, *, motion_estimator=None,
+                 weights_name='yolo11s-pose.pt', keypoint_confidence=KEYPOINT_CONFIDENCE,
+                 match_iou_min=MATCH_IOU_MIN, displacement_threshold=DISPLACEMENT_THRESHOLD,
+                 window_seconds=WINDOW_SECONDS, merge_gap_seconds=MERGE_GAP_SECONDS,
+                 max_gap_seconds=MAX_GAP_SECONDS, max_camera_shift=MAX_CAMERA_SHIFT,
+                 max_camera_scale_change=MAX_CAMERA_SCALE_CHANGE,
+                 min_camera_inliers=MIN_CAMERA_INLIERS):
+        self.data, self.tracking_sha, self.output_dir = data, tracking_sha, Path(output_dir)
+        self.motion_estimator = (motion_estimator if motion_estimator is not None
+                                 else BackgroundMotionEstimator(min_inliers=min_camera_inliers))
+        self.config = {'weights': weights_name, 'keypoint_confidence': keypoint_confidence,
+                       'match_iou_min': match_iou_min,
+                       'displacement_threshold': displacement_threshold,
+                       'window_seconds': window_seconds, 'merge_gap_seconds': merge_gap_seconds,
+                       'max_gap_seconds': max_gap_seconds, 'max_camera_shift': max_camera_shift,
+                       'max_camera_scale_change': max_camera_scale_change,
+                       'min_camera_inliers': min_camera_inliers}
+        self.breaks = _continuity(data['provenance']['causal_audit'])
+        self.samples, self.anchor = [], None
+
+    def step(self, number, row, index, frame, context):
+        config = self.config
+        if row['identity'] != 'confirmed':
+            self.samples.append({'time': row['time'], 'frame_index': index,
+                                 'identity': 'uncertain', 'state': None, 'centre': None,
+                                 'torso': None, 'camera': None})
+            self.anchor = None
+            return
+        image = frame.image
+        boxes = [list(box['xyxy']) for box in row['boxes']]
+        target = [box['xyxy'] for box in row['boxes'] if box.get('id') == row['target_id']][0]
+        points = _child_keypoints(frame.detections(), target, config['match_iou_min'])
+        width, height = image.size
+        measured = body_centre(points, aspect=width / height,
+                               keypoint_confidence=config['keypoint_confidence'])
+        camera = None
+        anchor = self.anchor
+        if measured is not None:
+            if (anchor is not None and self.breaks[index] == self.breaks[anchor['frame_index']]
+                    and row['time'] - anchor['time'] <= config['max_gap_seconds']):
+                camera = context.estimate(self.motion_estimator, anchor['frame'], anchor['boxes'],
+                                          frame, boxes)
+                if not valid_camera(camera, max_shift=config['max_camera_shift'],
+                                    max_scale_change=config['max_camera_scale_change']):
+                    camera = None
+            self.anchor = {'time': row['time'], 'frame_index': index, 'frame': frame,
+                           'boxes': boxes}
+        self.samples.append({'time': row['time'], 'frame_index': index, 'identity': 'confirmed',
+                             'state': None,
+                             'centre': None if measured is None else measured['centre'],
+                             'torso': None if measured is None else measured['torso'],
+                             'camera': camera})
+
+    def finish(self):
+        data, samples, config = self.data, self.samples, self.config
+        source = data['source']
+        self.anchor = None
+        for sample, state in zip(samples, sample_states(
+                samples, max_gap_seconds=config['max_gap_seconds'])):
+            sample['state'] = state
+        events = [{'event_id': f'lmv-{number:06d}', **event, 'clinician_confirmation': 'pending'}
+                  for number, event in enumerate(large_movement_events(
+                      samples, displacement_threshold=config['displacement_threshold'],
+                      window_seconds=config['window_seconds'],
+                      merge_gap_seconds=config['merge_gap_seconds'],
+                      max_gap_seconds=config['max_gap_seconds']))]
+        document = {'schema_version': 1, 'kind': 'large_movement_reading',
+                    'source_sha256': source['sha256'],
+                    'tracking_candidate_sha256': self.tracking_sha, 'config': config,
+                    'decoded_seconds': decoded_seconds(data), 'samples': samples,
+                    'events': events}
+        encoded = encode_large_movement_document(document, source['duration'])
+        report = {
+            'large_movement_candidate_sha256': hashlib.sha256(encoded).hexdigest(),
+            'tracking_candidate_sha256': self.tracking_sha, 'source_sha256': source['sha256'],
+            'state_counts': dict(sorted(Counter(sample['state'] or 'identity_uncertain'
+                                                for sample in samples).items())),
+            'event_counts': dict(sorted(Counter(event['kind'] for event in events).items())),
+        }
+        write_job_output(self.output_dir, self.PENDING, encoded, self.REPORT, report)
+        return report
+
+
 def read_large_movement(video_path, candidate_path, output_dir, *, detector,
                         motion_estimator=None, weights_name='yolo11s-pose.pt',
                         keypoint_confidence=KEYPOINT_CONFIDENCE, match_iou_min=MATCH_IOU_MIN,
@@ -118,96 +203,16 @@ def read_large_movement(video_path, candidate_path, output_dir, *, detector,
                         frame_reader_factory=SequentialFrameReader, progress=None,
                         repository_root=REPOSITORY_ROOT):
     """Write ``large_movement.pending.json`` and ``large_movement-report.json``; return counts."""
-    video_path, output_dir = Path(video_path), Path(output_dir).resolve()
-    if output_dir.is_relative_to(Path(repository_root).resolve()):
-        raise ValueError('output_inside_repository')
-    pending = output_dir / 'large_movement.pending.json'
-    report_path = output_dir / 'large_movement-report.json'
-    if pending.exists() or report_path.exists():
-        raise ValueError('large_movement_candidate_exists')
-    data, tracking_sha = load_tracking_candidate(candidate_path)
-    source = data['source']
-    if file_sha256(video_path) != source['sha256']:
-        raise ValueError('video_does_not_match_tracking_candidate')
-    if motion_estimator is None:
-        motion_estimator = BackgroundMotionEstimator(min_inliers=min_camera_inliers)
-    config = {'weights': weights_name, 'keypoint_confidence': keypoint_confidence,
-              'match_iou_min': match_iou_min, 'displacement_threshold': displacement_threshold,
-              'window_seconds': window_seconds, 'merge_gap_seconds': merge_gap_seconds,
-              'max_gap_seconds': max_gap_seconds, 'max_camera_shift': max_camera_shift,
-              'max_camera_scale_change': max_camera_scale_change,
-              'min_camera_inliers': min_camera_inliers}
-    audit = data['provenance']['causal_audit']
-    breaks = _continuity(audit)
-    frame_of_time = {row['time']: row['frame_index'] for row in audit}
-    rows = sorted(data['observations'], key=lambda row: row['time'])
-    samples, anchor = [], None
-    reader = frame_reader_factory(video_path)
-    try:
-        for number, row in enumerate(rows):
-            index = frame_of_time[row['time']]
-            if samples and index <= samples[-1]['frame_index']:
-                raise ValueError('invalid_tracking_candidate')
-            if row['identity'] != 'confirmed':
-                samples.append({'time': row['time'], 'frame_index': index,
-                                'identity': 'uncertain', 'state': None, 'centre': None,
-                                'torso': None, 'camera': None})
-                anchor = None
-                continue
-            image = reader.read(index)
-            boxes = [list(box['xyxy']) for box in row['boxes']]
-            target = [box['xyxy'] for box in row['boxes'] if box.get('id') == row['target_id']][0]
-            points = _child_keypoints(detector.detect(image), target, match_iou_min)
-            width, height = image.size
-            measured = body_centre(points, aspect=width / height,
-                                   keypoint_confidence=keypoint_confidence)
-            camera = None
-            if measured is not None:
-                if (anchor is not None and breaks[index] == breaks[anchor['frame_index']]
-                        and row['time'] - anchor['time'] <= max_gap_seconds):
-                    camera = motion_estimator.estimate(anchor['image'], anchor['boxes'],
-                                                       image, boxes)
-                    if not valid_camera(camera, max_shift=max_camera_shift,
-                                        max_scale_change=max_camera_scale_change):
-                        camera = None
-                anchor = {'time': row['time'], 'frame_index': index, 'image': image,
-                          'boxes': boxes}
-            samples.append({'time': row['time'], 'frame_index': index, 'identity': 'confirmed',
-                            'state': None,
-                            'centre': None if measured is None else measured['centre'],
-                            'torso': None if measured is None else measured['torso'],
-                            'camera': camera})
-            if progress and (number + 1) % 100 == 0:
-                progress(number + 1, len(rows))
-    finally:
-        reader.close()
-    if file_sha256(video_path) != source['sha256']:
-        raise ValueError('video_changed_during_reading')
-    for sample, state in zip(samples, sample_states(samples, max_gap_seconds=max_gap_seconds)):
-        sample['state'] = state
-    events = [{'event_id': f'lmv-{number:06d}', **event, 'clinician_confirmation': 'pending'}
-              for number, event in enumerate(large_movement_events(
-                  samples, displacement_threshold=displacement_threshold,
-                  window_seconds=window_seconds, merge_gap_seconds=merge_gap_seconds,
-                  max_gap_seconds=max_gap_seconds))]
-    document = {'schema_version': 1, 'kind': 'large_movement_reading',
-                'source_sha256': source['sha256'], 'tracking_candidate_sha256': tracking_sha,
-                'config': config, 'decoded_seconds': decoded_seconds(data),
-                'samples': samples, 'events': events}
-    encoded = encode_large_movement_document(document, source['duration'])
-    report = {
-        'large_movement_candidate_sha256': hashlib.sha256(encoded).hexdigest(),
-        'tracking_candidate_sha256': tracking_sha, 'source_sha256': source['sha256'],
-        'state_counts': dict(sorted(Counter(sample['state'] or 'identity_uncertain'
-                                            for sample in samples).items())),
-        'event_counts': dict(sorted(Counter(event['kind'] for event in events).items())),
-    }
-    output_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        _write_bytes(pending, encoded)
-        _write_bytes(report_path, json.dumps(report, sort_keys=True, indent=1).encode('utf-8'))
-    except BaseException:
-        pending.unlink(missing_ok=True)
-        report_path.unlink(missing_ok=True)
-        raise
-    return report
+    output_dir = check_output_dir(output_dir, (LargeMovementJob.PENDING, LargeMovementJob.REPORT),
+                                  repository_root, 'large_movement_candidate_exists')
+    data, tracking_sha = load_bound_candidate(video_path, candidate_path)
+    job = LargeMovementJob(data, tracking_sha, output_dir, motion_estimator=motion_estimator,
+                           weights_name=weights_name, keypoint_confidence=keypoint_confidence,
+                           match_iou_min=match_iou_min,
+                           displacement_threshold=displacement_threshold,
+                           window_seconds=window_seconds, merge_gap_seconds=merge_gap_seconds,
+                           max_gap_seconds=max_gap_seconds, max_camera_shift=max_camera_shift,
+                           max_camera_scale_change=max_camera_scale_change,
+                           min_camera_inliers=min_camera_inliers)
+    return run_pass(Path(video_path), data, [job], detector=detector,
+                    frame_reader_factory=frame_reader_factory, progress=progress)[0]

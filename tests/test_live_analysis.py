@@ -97,6 +97,23 @@ def unused_reader(*args, **kwargs):
     raise AssertionError('should not run')
 
 
+def local_reader(per_channel):
+    """Fake one-pass local reader built from per-channel fakes: (reports, errors)."""
+    def read(video, pending, outputs, *, detector, task_region, weights_name, motion_estimator,
+             progress):
+        reports, errors = {}, {}
+        for name, folder in outputs.items():
+            options = {'task_region': task_region} if name == 'orientation' else {}
+            try:
+                reports[name] = per_channel[name](video, pending, folder, detector=detector,
+                                                  weights_name=weights_name, progress=progress,
+                                                  **options)
+            except ValueError as error:
+                errors[name] = error
+        return reports, errors
+    return read
+
+
 def make_manager(root, *, session_class=FakeReviewSession, context=None, orientation=unused_reader):
     from aba_demo.live.analysis import AnalysisManager, ContextUnavailable, Pipeline
     from aba_demo.live.library import SessionLibrary
@@ -106,8 +123,10 @@ def make_manager(root, *, session_class=FakeReviewSession, context=None, orienta
 
     pipeline = Pipeline(weights='yolo11s-pose.pt', review_session=session_class,
                         detector=lambda: object(), motion_estimator=lambda: object(),
-                        readers={'posture': posture_reader, 'movement': failing_reader,
-                                 'orientation': orientation, 'context': unused_reader},
+                        readers={'local': local_reader({'posture': posture_reader,
+                                                        'movement': failing_reader,
+                                                        'orientation': orientation}),
+                                 'context': unused_reader},
                         context_adapters=context or no_context)
     library = SessionLibrary(root)
     return library, AnalysisManager(library, pipeline,
