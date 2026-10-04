@@ -42,3 +42,33 @@ describe("i18n", () => {
     expect(readStoredLanguage(null)).toBe("en");
   });
 });
+
+describe("context v2 notes", () => {
+  it("tell before, the model's view and after; material changes only when reported", async () => {
+    const { STRINGS, contextStory } = await import("./i18n");
+    const s = STRINGS.ar;
+    expect(contextStory({ child_separable: "yes", child_location: "at_table" }, s)).toBeNull();
+    const story = contextStory(
+      {
+        child_separable: "yes",
+        child_position_after: "standing",
+        adult_movement_before: "moved_closer",
+        adult_movement_after: "stayed",
+        materials_change_before: "no_change",
+        materials_change_after: "removed",
+        second_opinion: "disagrees",
+      },
+      s,
+    );
+    expect(story).toEqual({
+      before: "البالغ اقترب",
+      after: "البالغ بقي في مكانه",
+      position: "واقف",
+      opinion: "disagrees",
+      experimental: { before: "", after: "أُزيلت أدوات" },
+    });
+    const hidden = contextStory({ child_separable: "no", second_opinion: "unclear" }, STRINGS.en);
+    expect(hidden?.position).toBe(STRINGS.en.detail.notSeparable);
+    expect(hidden?.opinion).toBeNull();
+  });
+});

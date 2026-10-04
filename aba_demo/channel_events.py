@@ -17,6 +17,7 @@ import math
 import re
 
 from .context_channel_schema import validate_context_channel_document
+from .context_v2 import DOCUMENT_KIND as CONTEXT_V2_KIND, validate_context_v2_document
 from .large_movement_schema import validate_large_movement_document
 from .orientation_schema import validate_orientation_document
 from .posture_schema import CLINICIAN_CONFIRMATIONS, validate_posture_document
@@ -54,6 +55,13 @@ def _context_events(document):
             for event in document['events']]
 
 
+def _validate_context(document, source_duration):
+    """Both context readings: v2 (before / during / after) and the original v1."""
+    if isinstance(document, dict) and document.get('kind') == CONTEXT_V2_KIND:
+        return validate_context_v2_document(document, source_duration)
+    return validate_context_channel_document(document, source_duration)
+
+
 # channel -> (allowed kinds, origin, validate(document, duration), to_events(document))
 CHANNELS = {
     'posture': (('sit_to_stand', 'stand_to_sit'), 'measured',
@@ -63,13 +71,13 @@ CHANNELS = {
     'movement': (('large_movement',), 'measured',
                  validate_large_movement_document, _measured_events('movement')),
     'context': (('context_note',), 'suggested',
-                validate_context_channel_document, _context_events),
+                _validate_context, _context_events),
 }
 
 # Document ``kind`` written by each channel's reader -> channel name.
 DOCUMENT_KINDS = {'posture_reading': 'posture', 'orientation_reading': 'orientation',
                   'large_movement_reading': 'movement',
-                  'context_channel_reading': 'context'}
+                  'context_channel_reading': 'context', CONTEXT_V2_KIND: 'context'}
 
 
 def _finite(value):

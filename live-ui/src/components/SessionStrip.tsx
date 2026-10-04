@@ -1,6 +1,6 @@
 import { formatClock } from "../lib/format";
 import { groupEntries } from "../lib/grouping";
-import { contextDetails, titleCase, useI18n } from "../lib/i18n";
+import { contextDetails, contextStory, titleCase, useI18n, type ContextStory } from "../lib/i18n";
 import type { ChannelEntry } from "../lib/types";
 import { Card, SectionTitle, cx } from "./ui";
 
@@ -46,8 +46,11 @@ export function SessionStrip({ entries, duration, videoTime, onWatch, hideBar = 
           <ol className="scrollbar-thin mt-3 max-h-[420px] divide-y divide-line overflow-y-auto">
             {(hideBar ? groups : [...groups].reverse()).map((group) => {
               const measured = group.entries.filter((e) => e.origin !== "suggested");
-              const notes = [...new Set(group.entries.filter((e) => e.origin === "suggested")
+              const suggested = group.entries.filter((e) => e.origin === "suggested");
+              const stories = suggested.map((e) => contextStory(e.details, s)).filter((story) => story !== null);
+              const notes = [...new Set(suggested.filter((e) => contextStory(e.details, s) === null)
                 .map((e) => contextDetails(e.details, s)).filter(Boolean))];
+              const check = stories.some((story) => story.opinion === "disagrees");
               const kinds = [...new Set(measured.map((e) => s.kind[e.kind] ?? titleCase(e.kind)))];
               return (
                 <li
@@ -61,11 +64,17 @@ export function SessionStrip({ entries, duration, videoTime, onWatch, hideBar = 
                     <p className="font-medium">
                       {group.level === "flag" ? "⚠ " : ""}
                       {kinds.join(" + ") || s.kind.context_note}
+                      {check && (
+                        <span className="ms-2 rounded-md bg-attention-soft px-1.5 py-px text-[11px] font-semibold text-attention ring-1 ring-attention-line">
+                          {s.strip.checkBadge}
+                        </span>
+                      )}
                     </p>
                     <p className="text-xs text-muted">
                       {s.activity[group.entries[0]!.activity]} · {s.level[group.level]}
                       {notes.length > 0 && <> · <span className="italic">{s.strip.suggestion}: {notes.join(s.dir === "rtl" ? "؛ " : "; ")}</span></>}
                     </p>
+                    {stories.map((story, index) => <ContextLines key={index} story={story} />)}
                   </div>
                   {onWatch && (
                     <button
@@ -83,5 +92,45 @@ export function SessionStrip({ entries, duration, videoTime, onWatch, hideBar = 
         )}
       </div>
     </Card>
+  );
+}
+
+/** A v2 context note: what the nearest adult did before and after, and the model's view of the child. */
+function ContextLines({ story }: { story: ContextStory }) {
+  const { s } = useI18n();
+  const line = (label: string, text: string, experimental: string) =>
+    text || experimental ? (
+      <p>
+        <span className="text-faint">{label}:</span> {text}
+        {experimental && (
+          <>
+            {text && " · "}
+            {experimental}{" "}
+            <span className="rounded bg-surface-2 px-1 text-[10px] text-faint ring-1 ring-line">{s.strip.experimental}</span>
+          </>
+        )}
+      </p>
+    ) : null;
+  return (
+    <div className="mt-1.5 grid gap-0.5 border-s-2 border-accent/30 ps-2 text-xs text-muted">
+      {line(s.strip.before, story.before, story.experimental.before)}
+      {story.position && (
+        <p>
+          <span className="text-faint">{s.strip.modelSees}:</span> <span className="text-ink">{story.position}</span>
+          {story.opinion && (
+            <span
+              className={cx(
+                "ms-1.5 rounded px-1.5 py-px text-[11px] font-medium",
+                story.opinion === "agrees" ? "bg-positive-soft text-positive" : "bg-attention-soft text-attention",
+              )}
+            >
+              {s.strip[story.opinion]}
+            </span>
+          )}
+        </p>
+      )}
+      {line(s.strip.after, story.after, story.experimental.after)}
+      <p className="text-[10px] italic text-faint">{s.strip.suggestion}</p>
+    </div>
   );
 }

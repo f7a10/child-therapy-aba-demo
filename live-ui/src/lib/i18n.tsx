@@ -276,6 +276,13 @@ const en = {
     suggestion: "Model suggestion",
     watch: "Watch",
     watchAria: (time: string) => `Watch the moment at ${time}`,
+    before: "Before",
+    after: "After",
+    modelSees: "Model sees the child",
+    experimental: "experimental",
+    agrees: "agrees with the measurement",
+    disagrees: "needs checking: the model sees it differently",
+    checkBadge: "Needs checking",
   },
   channel: {
     posture: "Posture",
@@ -329,6 +336,14 @@ const en = {
     child_location: { at_table: "at the table", away_from_table: "away from the table", walking: "moving around", on_floor: "on the floor" } as Record<string, string>,
     child_handling_material: { yes: "holding material", no: "not holding material" } as Record<string, string>,
     notSeparable: "child not separable from adult",
+    child_position_after: {
+      seated: "seated", standing: "standing", walking: "walking", on_floor: "on the floor", held_by_adult: "held by an adult",
+    } as Record<string, string>,
+    adult_movement: {
+      moved_closer: "the adult moved closer", moved_away: "the adult moved away", stayed: "the adult stayed in place",
+      no_adult_visible: "no adult in view",
+    } as Record<string, string>,
+    materials_change: { added: "materials added", removed: "materials removed" } as Record<string, string>,
   },
   timeline: {
     identityConfirmed: "Identity confirmed",
@@ -615,6 +630,13 @@ const ar: Strings = {
     suggestion: "مقترح من نموذج",
     watch: "شاهد",
     watchAria: (time: string) => `شاهد اللحظة عند ${time}`,
+    before: "قبل",
+    after: "بعد",
+    modelSees: "النموذج يرى الطفل",
+    experimental: "تجريبي",
+    agrees: "يتفق مع القياس",
+    disagrees: "يحتاج تحقق: النموذج يراه بشكل مختلف",
+    checkBadge: "يحتاج تحقق",
   },
   channel: {
     posture: "الوضعية",
@@ -668,6 +690,14 @@ const ar: Strings = {
     child_location: { at_table: "عند الطاولة", away_from_table: "بعيد عن الطاولة", walking: "يتنقّل", on_floor: "على الأرض" },
     child_handling_material: { yes: "يمسك أداة", no: "لا يمسك أداة" },
     notSeparable: "تعذّر فصل جسم الطفل عن البالغ",
+    child_position_after: {
+      seated: "جالس", standing: "واقف", walking: "يمشي", on_floor: "على الأرض", held_by_adult: "يحمله بالغ",
+    },
+    adult_movement: {
+      moved_closer: "البالغ اقترب", moved_away: "البالغ ابتعد", stayed: "البالغ بقي في مكانه",
+      no_adult_visible: "لا يظهر بالغ",
+    },
+    materials_change: { added: "أُضيفت أدوات", removed: "أُزيلت أدوات" },
   },
   timeline: {
     identityConfirmed: "تأكدت هوية الطفل",
@@ -734,9 +764,40 @@ export function timelineText(item: { label: TimelineLabel }, s: Strings): { titl
 /** Closed-enum context details as text; unclear answers are left out. */
 export function contextDetails(details: Record<string, string>, s: Strings): string {
   if (details.child_separable === "no") return s.detail.notSeparable;
-  return [s.detail.child_location[details.child_location ?? ""], s.detail.child_handling_material[details.child_handling_material ?? ""]]
+  return [
+    s.detail.child_location[details.child_location ?? ""],
+    s.detail.child_handling_material[details.child_handling_material ?? ""],
+    s.detail.child_position_after[details.child_position_after ?? ""],
+  ]
     .filter(Boolean)
     .join(" · ");
+}
+
+/** Context v2 (before / during / after) as display lines; null for v1 notes. */
+export interface ContextStory {
+  before: string;
+  after: string;
+  position: string;
+  opinion: "agrees" | "disagrees" | null;
+  experimental: { before: string; after: string };
+}
+
+export function contextStory(details: Record<string, string>, s: Strings): ContextStory | null {
+  if (!("second_opinion" in details)) return null;
+  const separable = details.child_separable !== "no";
+  const pick = (map: Record<string, string>, key: string) => (separable ? map[details[key] ?? ""] ?? "" : "");
+  const opinion = details.second_opinion;
+  return {
+    before: pick(s.detail.adult_movement, "adult_movement_before"),
+    after: pick(s.detail.adult_movement, "adult_movement_after"),
+    position: separable ? pick(s.detail.child_position_after, "child_position_after") : s.detail.notSeparable,
+    opinion: opinion === "agrees" || opinion === "disagrees" ? opinion : null,
+    // Material changes are shown only when one is reported, marked experimental (not yet validated).
+    experimental: {
+      before: pick(s.detail.materials_change, "materials_change_before"),
+      after: pick(s.detail.materials_change, "materials_change_after"),
+    },
+  };
 }
 
 /** Scenario title in the current language (server titles are English). */

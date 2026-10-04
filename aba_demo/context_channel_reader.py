@@ -87,6 +87,123 @@ def plan_context_moments(data, events, *, max_frames=3, max_moments=MAX_MOMENTS)
     return moments, skipped
 
 
+def send_windows(moments, windows, adapter_of, source_sha256, *, max_requests,
+                 min_request_interval=0.0, rate_limit_wait=0.0, sleep=clock.sleep,
+                 progress=None, max_parallel=1):
+    """Ask one question per window; return ``(answers, stats)``.
+
+    ``answers[i]`` is ``(observation, None)`` or ``(None, failure_code)`` for
+    ``windows[i]``. Request starts are spaced by ``min_request_interval``; a rate
+    limit waits and retries, an invalid response is retried once, both only while
+    every moment not yet started keeps one request of the hard ``max_requests``
+    cap. A terminal provider error stops requests not yet started and is raised
+    with ``requests_used``. With ``max_parallel`` > 1 several requests wait on the
+    provider at once; the answers and their order do not change.
+    """
+    state = {'requests_used': 0, 'rate_limit_waits': 0, 'started': 0, 'done': 0,
+             'last_request': None, 'stop': None}
+    providers, models, failure_codes = set(), set(), Counter()
+    lock, start_lock = threading.Lock(), threading.Lock()
+
+    def begin_attempt(first):
+        with start_lock:
+            if state['stop'] is not None:
+                raise _Stopped()
+            last = state['last_request']
+            if last is not None and min_request_interval:
+                sleep(max(0.0, min_request_interval - (clock.monotonic() - last)))
+            with lock:
+                state['requests_used'] += 1
+                state['started'] += first
+                state['last_request'] = clock.monotonic()
+
+    def can_retry():
+        # Every moment whose first request has not started yet keeps one request reserved.
+        with lock:
+            return state['requests_used'] + len(moments) - state['started'] < max_requests
+
+    def ask(position):
+        moment, window = moments[position], windows[position]
+        observation, failure, retried, first = None, None, False, True
+        while True:
+            begin_attempt(first)
+            first = False
+            try:
+                result = adapter_of(moment).analyze(window['frames'],
+                                                    source_sha256=source_sha256)
+            except OpenRouterContextError as error:
+                retry = can_retry()
+                with lock:
+                    wait = (error.code == 'provider_rate_limited' and rate_limit_wait
+                            and state['rate_limit_waits'] < MAX_RATE_LIMIT_WAITS and retry)
+                    if wait:
+                        state['rate_limit_waits'] += 1
+                if wait:
+                    sleep(rate_limit_wait)
+                    continue
+                if error.code in TERMINAL_PROVIDER_CODES:
+                    raise
+                failure = error.code + (':' + error.detail if error.detail else '')
+                with lock:
+                    failure_codes[failure] += 1
+                if error.code == 'provider_response_invalid' and not retried and retry:
+                    retried = True
+                    continue
+                break
+            if not isinstance(result, dict) or not isinstance(result.get('observation'), dict):
+                raise ValueError('invalid_adapter_result')
+            observation = dict(result['observation'])
+            provenance = result.get('provenance') or {}
+            with lock:
+                providers.add(str(provenance.get('endpoint_provider')))
+                models.add(str(provenance.get('resolved_model')))
+            break
+        with lock:
+            state['done'] += 1
+            done = state['done']
+        if progress:
+            progress(done, len(moments))
+        return observation, None if observation else failure
+
+    def ask_or_stop_others(position):
+        try:
+            return ask(position)
+        except _Stopped:
+            raise
+        except BaseException as error:
+            state['stop'] = error  # requests not yet started are not sent
+            raise
+
+    answers = [None] * len(moments)
+    try:
+        if max_parallel == 1:
+            for position in range(len(moments)):
+                answers[position] = ask(position)
+        else:
+            # Moments are independent: several requests wait on the provider at once,
+            # while the request spacing, the retry rules and the hard cap stay shared.
+            with ThreadPoolExecutor(max_workers=max_parallel) as pool:
+                futures = [pool.submit(ask_or_stop_others, position)
+                           for position in range(len(moments))]
+                error = None
+                for position, future in enumerate(futures):
+                    try:
+                        answers[position] = future.result()
+                    except _Stopped:
+                        continue
+                    except BaseException as failure:
+                        error = error or failure
+                if error is not None:
+                    raise error
+    except OpenRouterContextError as error:
+        if error.code in TERMINAL_PROVIDER_CODES:
+            error.requests_used = state['requests_used']
+        raise
+    return answers, {'requests_used': state['requests_used'],
+                     'rate_limit_waits': state['rate_limit_waits'],
+                     'failure_codes': failure_codes, 'providers': providers, 'models': models}
+
+
 def read_context(video_path, candidate_path, channel_paths, output_dir, adapters, *,
                  activity_segments, model, provider, max_requests, max_frames=3, max_moments=MAX_MOMENTS,
                  min_request_interval=0.0, rate_limit_wait=0.0,
@@ -154,113 +271,20 @@ def read_context(video_path, candidate_path, channel_paths, output_dir, adapters
         crop_mode='window_stable_others_marked') for m in moments]
     images.clear()
 
-    state = {'requests_used': 0, 'rate_limit_waits': 0, 'started': 0, 'done': 0,
-             'last_request': None, 'stop': None}
-    providers, models, failure_codes = set(), set(), Counter()
-    lock, start_lock = threading.Lock(), threading.Lock()
-
-    def begin_attempt(first):
-        """Space request starts, count the request; requests stay under the hard cap."""
-        with start_lock:
-            if state['stop'] is not None:
-                raise _Stopped()
-            last = state['last_request']
-            if last is not None and min_request_interval:
-                sleep(max(0.0, min_request_interval - (clock.monotonic() - last)))
-            with lock:
-                state['requests_used'] += 1
-                state['started'] += first
-                state['last_request'] = clock.monotonic()
-
-    def can_retry():
-        # Every moment whose first request has not started yet keeps one request reserved.
-        with lock:
-            return state['requests_used'] + len(moments) - state['started'] < max_requests
-
-    def ask(position):
-        moment, window = moments[position], windows[position]
-        observation, failure, retried, first = None, None, False, True
-        while True:
-            begin_attempt(first)
-            first = False
-            try:
-                result = adapters[moment['activity']].analyze(
-                    window['frames'], source_sha256=source['sha256'])
-            except OpenRouterContextError as error:
-                retry = can_retry()
-                with lock:
-                    wait = (error.code == 'provider_rate_limited' and rate_limit_wait
-                            and state['rate_limit_waits'] < MAX_RATE_LIMIT_WAITS and retry)
-                    if wait:
-                        state['rate_limit_waits'] += 1
-                if wait:
-                    sleep(rate_limit_wait)
-                    continue
-                if error.code in TERMINAL_PROVIDER_CODES:
-                    raise
-                failure = error.code + (':' + error.detail if error.detail else '')
-                with lock:
-                    failure_codes[failure] += 1
-                if error.code == 'provider_response_invalid' and not retried and retry:
-                    retried = True
-                    continue
-                break
-            if not isinstance(result, dict) or not isinstance(result.get('observation'), dict):
-                raise ValueError('invalid_adapter_result')
-            observation = dict(result['observation'])
-            provenance = result.get('provenance') or {}
-            with lock:
-                providers.add(str(provenance.get('endpoint_provider')))
-                models.add(str(provenance.get('resolved_model')))
-            break
-        entry = ({key: moment[key] for key in ('moment_id', 'anchors', 'start_time',
-                                                'end_time', 'detected_time', 'activity')}
-                 | {'frame_times': [f['time'] for f in moment['frames']],
-                    'status': 'read' if observation else 'unread',
-                    'failure': None if observation else failure,
-                    'observation': observation})
-        with lock:
-            state['done'] += 1
-            done = state['done']
-        if progress:
-            progress(done, len(moments))
-        return entry
-
-    def ask_or_stop_others(position):
-        try:
-            return ask(position)
-        except _Stopped:
-            raise
-        except BaseException as error:
-            state['stop'] = error  # requests not yet started are not sent
-            raise
-
-    stored = [None] * len(moments)
-    try:
-        if max_parallel == 1:
-            for position in range(len(moments)):
-                stored[position] = ask(position)
-        else:
-            # Moments are independent: several requests wait on the provider at once,
-            # while the request spacing, the retry rules and the hard cap stay shared.
-            with ThreadPoolExecutor(max_workers=max_parallel) as pool:
-                futures = [pool.submit(ask_or_stop_others, position)
-                           for position in range(len(moments))]
-                error = None
-                for position, future in enumerate(futures):
-                    try:
-                        stored[position] = future.result()
-                    except _Stopped:
-                        continue
-                    except BaseException as failure:
-                        error = error or failure
-                if error is not None:
-                    raise error
-    except OpenRouterContextError as error:
-        if error.code in TERMINAL_PROVIDER_CODES:
-            error.requests_used = state['requests_used']
-        raise
-    requests_used, rate_limit_waits = state['requests_used'], state['rate_limit_waits']
+    answers, stats = send_windows(
+        moments, windows, lambda moment: adapters[moment['activity']], source['sha256'],
+        max_requests=max_requests, min_request_interval=min_request_interval,
+        rate_limit_wait=rate_limit_wait, sleep=sleep, progress=progress,
+        max_parallel=max_parallel)
+    stored = [{key: moment[key] for key in ('moment_id', 'anchors', 'start_time', 'end_time',
+                                            'detected_time', 'activity')}
+              | {'frame_times': [f['time'] for f in moment['frames']],
+                 'status': 'read' if observation else 'unread',
+                 'failure': None if observation else failure,
+                 'observation': observation}
+              for moment, (observation, failure) in zip(moments, answers)]
+    requests_used, rate_limit_waits = stats['requests_used'], stats['rate_limit_waits']
+    providers, models, failure_codes = stats['providers'], stats['models'], stats['failure_codes']
     if providers - {provider}:
         raise ValueError('provider_not_pinned')
     if file_sha256(video_path) != source['sha256']:

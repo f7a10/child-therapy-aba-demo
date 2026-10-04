@@ -1,6 +1,7 @@
 """Context v2 pilot: before/after frame planning, strict answers, local second opinion."""
 import json
 import unittest
+from pathlib import Path
 
 from movement_fixtures import candidate
 
@@ -91,6 +92,81 @@ class SecondOpinionTests(unittest.TestCase):
                                         {'child_position_after': 'seated'}), 'unclear')
         self.assertEqual(second_opinion(stood, None), 'unclear')
 
+
+
+class ReaderTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+
+        self.directory = tempfile.TemporaryDirectory()
+        self.folder = Path(self.directory.name)
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def test_v2_reading_is_bound_validated_and_feeds_the_timeline(self):
+        import hashlib
+
+        from aba_demo.channel_events import reading_for_document
+        from aba_demo.context_v2_reader import read_context_v2
+        from aba_demo.session_timeline import build_timeline
+        from test_context_channel_reader import FakeReader, posture_for
+
+        video = self.folder / 'session.mp4'
+        video.write_bytes(b'authorized-video')
+        source = hashlib.sha256(b'authorized-video').hexdigest()
+        tracking = self.folder / 'observations.pending.json'
+        tracking.write_text(json.dumps(candidate(source, decoded=120)), encoding='utf-8')
+        tracking_sha = hashlib.sha256(tracking.read_bytes()).hexdigest()
+        posture = posture_for(source, tracking_sha, decoded_seconds=12.0)  # stand_to_sit ~1.5-2 s
+        posture_path = self.folder / 'posture.pending.json'
+        posture_path.write_text(json.dumps(posture), encoding='utf-8')
+        asked = []
+
+        class Adapter:
+            def __init__(self, task):
+                self.task = task
+
+            def analyze(self, frames, *, source_sha256):
+                asked.append((self.task.name, len(frames)))
+                fields = self.task.output_schema(len(frames))['required']
+                answer = {name: 'not_observable' for name in fields}
+                answer.update(child_separable='yes', child_location='at_table',
+                              child_position_after='seated')
+                for name in fields:
+                    if name.startswith('adult_movement'):
+                        answer[name] = 'moved_away'
+                return {'observation': self.task.parse(json.dumps(answer), []),
+                        'provenance': {'endpoint_provider': 'Wafer', 'resolved_model': 'm'}}
+
+        segments = [{'start_time': 0.0, 'end_time': 12.0, 'activity': 'table'}]
+        plan = read_context_v2(video, tracking, [posture_path], self.folder / 'plan', Adapter,
+                               activity_segments=segments, model='m/x', provider='Wafer',
+                               max_requests=None, plan_only=True, frame_reader_factory=FakeReader)
+        self.assertEqual(plan['moments'], 1)
+        report = read_context_v2(video, tracking, [posture_path], self.folder / 'out', Adapter,
+                                 activity_segments=segments, model='m/x', provider='Wafer',
+                                 max_requests=2, frame_reader_factory=FakeReader,
+                                 sleep=lambda seconds: None)
+        self.assertEqual((report['read'], report['second_opinions']), (1, {'agrees': 1}))
+        raw = (self.folder / 'out' / 'context_channel.pending.json').read_bytes()
+        document = json.loads(raw)
+        self.assertEqual(document['kind'], 'context_v2_reading')
+        reading = reading_for_document(document, 12.1)
+        self.assertEqual(reading['channel'], 'context')
+        event = reading['events'][0]
+        self.assertEqual((event['origin'], event['details']['second_opinion'],
+                          event['details']['adult_movement_after']),
+                         ('suggested', 'agrees', 'moved_away'))
+        self.assertLessEqual(len(event['details']), 8)
+        self.assertEqual(asked, [(asked[0][0], len(document['moments'][0]['roles']))])
+        timeline = build_timeline({'context': (document, hashlib.sha256(raw).hexdigest())},
+                                  segments, 12.1)
+        self.assertEqual(len(timeline['entries']), 1)
+        tampered = dict(document, moments=[dict(document['moments'][0],
+                                                second_opinion='disagrees')])
+        with self.assertRaisesRegex(ValueError, 'invalid_context_v2_document'):
+            reading_for_document(tampered, 12.1)
 
 if __name__ == '__main__':
     unittest.main()

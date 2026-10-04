@@ -11,8 +11,9 @@ pose model uses the local GPU):
    child is out of view, or continue without further prompts.
 3. The local channels read the tracking file in one pass over the video
    (posture, large movement, and orientation when a task area was drawn; same
-   results as separate runs), then the context channel sends its sparse moments
-   to the configured provider, several requests at a time (always on in the
+   results as separate runs), then the context channel (v2: frames before,
+   during and after each moment) sends its sparse moments to the configured
+   provider, several requests at a time (always on in the
    site: approved by the project owner; privacy flags unchanged). A context
    failure leaves the local channels intact.
 4. The session folder gets its ``session.json`` and joins the library.
@@ -134,18 +135,17 @@ class Pipeline:
     def readers(self):
         if self._readers is not None:
             return self._readers
-        from ..context_channel_reader import read_context
+        from ..context_v2_reader import read_context_v2
         from ..local_channels import read_local_channels
 
-        return {'local': read_local_channels, 'context': read_context}
+        return {'local': read_local_channels, 'context': read_context_v2}
 
     def context_adapters(self):
-        """One adapter per activity, or ContextUnavailable with a short code."""
+        """``task -> adapter`` for the context questions, or ContextUnavailable (short code)."""
         if self._context_adapters is not None:
             return self._context_adapters()
         if not (self.context_model and self.context_provider and self.key_file):
             raise ContextUnavailable('provider_not_configured')
-        from ..context_channel_schema import CONTEXT_TASKS
         from ..openrouter_context import OpenRouterContextAdapter
         try:
             key = _read_local_key(Path(self.key_file))
@@ -153,13 +153,13 @@ class Pipeline:
             raise ContextUnavailable('invalid_config') from None
         if key is None:
             raise ContextUnavailable('provider_not_configured')
-        try:
-            return {activity: OpenRouterContextAdapter(
-                api_key=key, model=self.context_model, max_tokens=8192,
-                task=CONTEXT_TASKS[activity], provider_order=[self.context_provider],
-                reasoning={'effort': 'low', 'exclude': True}) for activity in ACTIVITIES}
-        finally:
-            key = None
+        model, provider = self.context_model, self.context_provider
+
+        def adapter_for(task):
+            return OpenRouterContextAdapter(
+                api_key=key, model=model, max_tokens=8192, task=task,
+                provider_order=[provider], reasoning={'effort': 'low', 'exclude': True})
+        return adapter_for
 
 
 class AnalysisJob:

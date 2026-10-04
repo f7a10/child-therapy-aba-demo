@@ -12,12 +12,17 @@ comparison with the measurement is done locally (``second_opinion``) and only
 marks a moment for review. Raw model output is never kept.
 """
 
+import copy
 import hashlib
 import json
+import math
+import re
 
+from .activities import _validate_segments, activity_at
 from .context_channel_schema import _unique_object
 from .movement_windows import _target_samples
 from .openrouter_context import VisualTask
+from .posture_schema import CLINICIAN_CONFIRMATIONS
 
 ROLES = ('before', 'start', 'end', 'after')
 LEAD_SECONDS = 3.0
@@ -247,3 +252,135 @@ def second_opinion(anchor_kinds, observation):
     if 'disagrees' in verdicts:
         return 'disagrees'
     return 'agrees' if verdicts and all(v == 'agrees' for v in verdicts) else 'unclear'
+
+
+# ----- document (pending, source- and tracking-bound) -----
+
+DOCUMENT_KIND = 'context_v2_reading'
+SCHEMA_VERSION = 1
+MAX_FRAMES_PER_MOMENT = len(ROLES)
+# Shown with each note (the event's ``details``, at most 8 short tokens with second_opinion).
+DETAIL_FIELDS = ('child_separable', 'child_location', 'child_position_after',
+                 'adult_movement_before', 'adult_movement_after',
+                 'materials_change_before', 'materials_change_after')
+SECOND_OPINIONS = ('agrees', 'disagrees', 'unclear')
+EVENT_KIND = 'context_note'
+DOCUMENT_KEYS = frozenset({'schema_version', 'kind', 'source_sha256',
+                           'tracking_candidate_sha256', 'decoded_seconds', 'config',
+                           'activity_segments', 'moments', 'events'})
+CONFIG_KEYS = frozenset({'model', 'provider', 'prompt_template_sha256', 'max_frames_per_moment'})
+MOMENT_KEYS = frozenset({'moment_id', 'anchors', 'start_time', 'end_time', 'detected_time',
+                         'activity', 'roles', 'frame_times', 'status', 'failure',
+                         'observation', 'second_opinion'})
+ANCHOR_KINDS = {'posture': ('sit_to_stand', 'stand_to_sit'), 'movement': ('large_movement',),
+                'orientation': ('turned_away_from_task', 'turned_back_to_task')}
+MAX_ANCHORS = 8
+MAX_MOMENTS = 200
+_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9._/:-]{0,127}')
+_CODE = re.compile(r'[a-z][a-z0-9_:]{0,79}')
+
+
+def _finite(value):
+    return type(value) in (int, float) and math.isfinite(value)
+
+
+def _sha(value):
+    return isinstance(value, str) and len(value) == 64 and set(value) <= set('0123456789abcdef')
+
+
+def _valid_moment(moment, decoded, segments):
+    if not isinstance(moment, dict) or set(moment) != MOMENT_KEYS:
+        return False
+    roles, times = moment['roles'], moment['frame_times']
+    bounds = (moment['start_time'], moment['end_time'], moment['detected_time'])
+    if not (isinstance(moment['moment_id'], str)
+            and re.fullmatch(r'ctx-\d{6}', moment['moment_id'])
+            and isinstance(moment['anchors'], list)
+            and 1 <= len(moment['anchors']) <= MAX_ANCHORS
+            and all(isinstance(a, dict) and set(a) == {'channel', 'event_id', 'kind'}
+                    and a['kind'] in ANCHOR_KINDS.get(a['channel'], ())
+                    and isinstance(a['event_id'], str) and 1 <= len(a['event_id']) <= 64
+                    for a in moment['anchors'])
+            and all(map(_finite, bounds))
+            and 0 <= bounds[0] <= bounds[1] <= bounds[2] <= decoded
+            and moment['activity'] == activity_at(segments, bounds[1])
+            and isinstance(roles, list) and tuple(roles) in LAYOUTS
+            and isinstance(times, list) and len(times) == len(roles)
+            and all(map(_finite, times)) and all(a < b for a, b in zip(times, times[1:]))
+            and 0 <= times[0] and times[-1] <= decoded
+            and all(bounds[0] <= time <= bounds[1]
+                    for role, time in zip(roles, times) if role in ('start', 'end'))):
+        return False
+    kinds = [(a['channel'], a['kind']) for a in moment['anchors']]
+    if moment['status'] == 'read':
+        return (moment['failure'] is None
+                and valid_observation(moment['observation'], tuple(roles))
+                and moment['second_opinion'] == second_opinion(kinds, moment['observation']))
+    return (moment['status'] == 'unread' and moment['observation'] is None
+            and moment['second_opinion'] is None
+            and isinstance(moment['failure'], str)
+            and _CODE.fullmatch(moment['failure']) is not None)
+
+
+def context_v2_events(moments):
+    """One suggested note per read moment; its evidence is the moment's own frames."""
+    return [{'event_id': moment['moment_id'], 'kind': EVENT_KIND,
+             'start_time': moment['start_time'], 'end_time': moment['end_time'],
+             'detected_time': moment['detected_time'],
+             'evidence_times': [time for role, time in zip(moment['roles'],
+                                                           moment['frame_times'])
+                                if role in ('start', 'end')],
+             'details': {**{name: moment['observation'][name] for name in DETAIL_FIELDS
+                            if name in moment['observation']},
+                         'second_opinion': moment['second_opinion']},
+             'clinician_confirmation': 'pending'}
+            for moment in moments if moment['status'] == 'read']
+
+
+def validate_context_v2_document(document, source_duration):
+    """Validate one v2 reading; raise ValueError('invalid_context_v2_document')."""
+    try:
+        config = document['config']
+        if (not isinstance(document, dict) or set(document) != DOCUMENT_KEYS
+                or document['schema_version'] != SCHEMA_VERSION
+                or document['kind'] != DOCUMENT_KIND
+                or not _sha(document['source_sha256'])
+                or not _sha(document['tracking_candidate_sha256'])
+                or not _finite(source_duration) or source_duration <= 0
+                or not _finite(document['decoded_seconds'])
+                or not 0 < document['decoded_seconds'] <= source_duration
+                or not isinstance(config, dict) or set(config) != CONFIG_KEYS
+                or not isinstance(config['model'], str) or not _NAME.fullmatch(config['model'])
+                or not isinstance(config['provider'], str)
+                or not _NAME.fullmatch(config['provider'])
+                or config['prompt_template_sha256'] != PROMPT_TEMPLATE_SHA256
+                or config['max_frames_per_moment'] != MAX_FRAMES_PER_MOMENT
+                or not isinstance(document['moments'], list)
+                or len(document['moments']) > MAX_MOMENTS):
+            raise ValueError
+        segments = document['activity_segments']
+        _validate_segments(segments, document['decoded_seconds'])
+        moments = document['moments']
+        if (not all(_valid_moment(m, document['decoded_seconds'], segments) for m in moments)
+                or len({m['moment_id'] for m in moments}) != len(moments)
+                or any(b['start_time'] < a['start_time'] for a, b in zip(moments, moments[1:]))):
+            raise ValueError
+        expected = context_v2_events(moments)
+        events = document['events']
+        if not isinstance(events, list) or len(events) != len(expected):
+            raise ValueError
+        for event, derived in zip(events, expected):
+            if (not isinstance(event, dict) or set(event) != set(derived)
+                    or event['clinician_confirmation'] not in CLINICIAN_CONFIRMATIONS
+                    or {k: v for k, v in event.items() if k != 'clinician_confirmation'}
+                    != {k: v for k, v in derived.items() if k != 'clinician_confirmation'}):
+                raise ValueError
+    except (ValueError, TypeError, KeyError):
+        raise ValueError('invalid_context_v2_document') from None
+    return copy.deepcopy(document)
+
+
+def encode_context_v2_document(document, source_duration):
+    validated = validate_context_v2_document(document, source_duration)
+    return json.dumps(validated, ensure_ascii=False, allow_nan=False, sort_keys=True,
+                      separators=(',', ':')).encode('utf-8')

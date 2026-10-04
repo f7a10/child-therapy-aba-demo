@@ -158,6 +158,7 @@ function ChannelRow({ channel, review, videoTime }: { channel: ChannelName; revi
   const flagged = review.entries.some((entry) => entry.channel === channel && entry.level === "flag");
   const band = summary?.bands?.find(([start, end]) => start <= videoTime && videoTime < end);
   const reason = review.skipped[channel];
+  const checks = review.entries.filter((entry) => entry.channel === channel && entry.details.second_opinion === "disagrees").length;
   return (
     <li
       className={cx(
@@ -181,7 +182,10 @@ function ChannelRow({ channel, review, videoTime }: { channel: ChannelName; revi
             {s.review.notAnalysed} · {reason ? s.review.reasons[reason] ?? reason : s.review.notInSession}
           </span>
         ) : channel === "context" ? (
-          <span>{s.review.contextRead(summary?.read ?? 0, summary?.moments ?? 0)}</span>
+          <span>
+            {s.review.contextRead(summary?.read ?? 0, summary?.moments ?? 0)}
+            {checks > 0 && <span className="font-medium text-attention"> · {s.strip.checkBadge}: {checks}</span>}
+          </span>
         ) : (
           <div className="grid gap-0.5">
             <span>{s.review.measured(Math.round((summary?.coverage ?? 0) * 100))}</span>
