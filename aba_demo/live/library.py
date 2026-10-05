@@ -23,6 +23,7 @@ from pathlib import Path
 
 from ..large_movement_features import motion_states
 from ..movement_windows import decoded_seconds
+from ..session_measures import episodes_csv, intervals_csv, session_measures
 from ..session_timeline import build_timeline
 from .scenarios import load_session_library, session_id_for
 
@@ -162,6 +163,8 @@ def review_payload(scenario):
         'summary': {name: channel_summary(name, document, decoded)
                     for name, (document, _) in channels.items()},
         'entries': timeline['entries'], 'groups': timeline['groups'],
+        'measures': session_measures({name: document for name, (document, _) in channels.items()},
+                                     decoded) if channels else None,
         'binding': {'source_sha256': scenario._digest,
                     'channels': {name: sha for name, (_, sha) in sorted(channels.items())}},
     }
@@ -302,6 +305,15 @@ class SessionLibrary:
             partial.write_text(json.dumps(document, ensure_ascii=False, indent=1), encoding='utf-8')
             os.replace(partial, path)
         return marks
+
+    def export_csv(self, session_id, kind):
+        """The interval sheet or the episode list as CSV text (``kind`` = intervals / episodes)."""
+        _, payload = self._payload(session_id)
+        if kind not in ('intervals', 'episodes'):
+            raise ValueError('invalid_export')
+        if payload['measures'] is None:
+            raise ValueError('no_measures')
+        return (intervals_csv if kind == 'intervals' else episodes_csv)(payload['measures'])
 
     def thumbnail(self, session_id):
         """A small still of the session's video for the library list (kept in memory)."""

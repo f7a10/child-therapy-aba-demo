@@ -10,6 +10,7 @@ import { CHANNELS, type ChannelEntry, type ReviewPayload } from "../lib/types";
 import { BrandMark } from "./TopBar";
 import { VERDICTS, VERDICT_ICON, VERDICT_TONE } from "./MomentReview";
 import { ContextLines } from "./SessionStrip";
+import { SessionSummary } from "./SessionSummary";
 import { Button, cx } from "./ui";
 
 /**
@@ -121,6 +122,12 @@ export function ReportView({ sessionId, onBack }: { sessionId: string; onBack: (
             />
           </dl>
         </Section>
+
+        {review.measures && (
+          <Section title={s.measures.title}>
+            <SessionSummary measures={review.measures} sessionId={review.id} printable />
+          </Section>
+        )}
 
         <Section title={s.report.channels}>
           <table className="w-full text-sm">

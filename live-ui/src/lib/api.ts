@@ -53,6 +53,8 @@ export const library = {
   review: (id: string) => request<ReviewPayload>(`/api/library/${encodeURIComponent(id)}`),
   videoUrl: (id: string) => `/api/library/${encodeURIComponent(id)}/video`,
   thumbnailUrl: (id: string) => `/api/library/${encodeURIComponent(id)}/thumbnail`,
+  exportUrl: (id: string, kind: "intervals" | "episodes") =>
+    `/api/library/${encodeURIComponent(id)}/export/${kind}.csv`,
   mark: (id: string, momentId: string, verdict: Verdict | null, note = "") =>
     request<{ clinician: Record<string, ClinicianMark> }>(
       `/api/library/${encodeURIComponent(id)}/moments/${encodeURIComponent(momentId)}`,

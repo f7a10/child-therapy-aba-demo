@@ -198,6 +198,16 @@ def create_app(manager: SessionManager | None = None, port: int = DEFAULT_PORT,
             return _error(404, "No still for this session")
         return Response(image, media_type="image/jpeg")
 
+    @app.get("/api/library/{session_id}/export/{kind}.csv")
+    async def library_export(session_id: str, kind: Literal["intervals", "episodes"]):
+        try:
+            text = await asyncio.to_thread(_library().export_csv, session_id, kind)
+        except KeyError:
+            raise SessionNotFound(session_id) from None
+        # A byte-order mark so spreadsheet programs read the file as UTF-8.
+        return Response("\ufeff" + text, media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="{session_id}-{kind}.csv"'})
+
     @app.put("/api/library/{session_id}/moments/{moment_id}")
     async def library_mark(session_id: str, moment_id: str, body: MomentMark):
         try:

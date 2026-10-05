@@ -10,9 +10,9 @@ Version 2 readings add three things, each from the same skeleton:
 
 * ``lying``: the shoulder-to-hip line is between ``LYING_MIN_DEGREES`` and
   180 minus that from vertical (body horizontal, e.g. on the floor), and the
-  thighs, when seen, are at least ``LYING_MIN_THIGH_DEGREES`` from vertical. A
-  child bending over has the head below the hips or vertical thighs, so it is
-  never lying. It is a measured posture and takes precedence over the leg ratio,
+  thighs are seen at least ``LYING_MIN_THIGH_DEGREES`` from vertical. A child
+  bending over has the head below the hips or vertical (or hidden) thighs, so it
+  is never lying; on the development videos real lying always showed the thighs. It is a measured posture and takes precedence over the leg ratio,
   which means nothing for a horizontal body.
 * a reason for every confirmed sample that is not measurable: no skeleton matched
   the child (``no_pose``), shoulders or hips hidden (``torso_hidden``), the body
@@ -147,7 +147,7 @@ def classify_posture_v2(ratio, torso_angle, thigh_angle, *, standing_min=STANDIN
             or not _finite(lying_min_thigh) or not 0 <= lying_min_thigh < 90):
         raise ValueError('invalid_posture_thresholds')
     if (torso_angle is not None and lying_min <= torso_angle <= 180 - lying_min
-            and (thigh_angle is None or thigh_angle >= lying_min_thigh)):
+            and thigh_angle is not None and thigh_angle >= lying_min_thigh):
         return 'lying'
     return classify_posture(ratio, standing_min=standing_min, sitting_max=sitting_max)
 

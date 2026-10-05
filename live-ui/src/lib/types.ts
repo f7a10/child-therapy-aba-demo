@@ -245,6 +245,48 @@ export interface ReviewPayload {
   entries: ReviewEntry[];
   /** The therapist's marks, by moment id (the moment's first entry id). */
   clinician: Record<string, ClinicianMark>;
+  /** Episodes, summary and interval sheet (aba_demo/session_measures.py); null without channels. */
+  measures: SessionMeasures | null;
+}
+
+export interface Episode {
+  kind: "standing" | "lying" | "away_from_area";
+  start: number;
+  end: number;
+  duration: number;
+  start_seen: boolean;
+  end_seen: boolean;
+}
+
+export interface EpisodeStats {
+  count: number;
+  total: number;
+  longest: number;
+}
+
+export interface IntervalRow {
+  start: number;
+  end: number;
+  posture: string | null;
+  posture_inferred: boolean;
+  area: string | null;
+  motion: string | null;
+  out_of_seat: boolean | null;
+  away_from_area: boolean | null;
+  large_movement: boolean | null;
+}
+
+export interface SessionMeasures {
+  episodes: Episode[];
+  intervals: IntervalRow[];
+  interval_seconds: number;
+  summary: {
+    episodes: Record<Episode["kind"], EpisodeStats>;
+    large_movements: number | null;
+    posture?: { measured_share: number; inferred_share: number; sitting_share: number | null };
+    area?: { measured_share: number; at_area_share: number | null };
+    motion?: { measured_share: number; moving_share: number | null };
+  };
 }
 
 export type Verdict = "confirmed" | "not_seen" | "unsure";

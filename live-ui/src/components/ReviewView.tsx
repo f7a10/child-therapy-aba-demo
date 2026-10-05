@@ -10,6 +10,7 @@ import { groupEntries } from "../lib/grouping";
 import { CHANNELS, type ChannelEntry, type ChannelName, type ClinicianMark, type ReviewPayload, type Verdict } from "../lib/types";
 import { ReviewTimeline } from "./ReviewTimeline";
 import { SessionStrip } from "./SessionStrip";
+import { SessionSummaryCard } from "./SessionSummary";
 import { Button, Card, SectionTitle, cx } from "./ui";
 
 const ICON: Record<ChannelName, LucideIcon> = {
@@ -161,6 +162,12 @@ export function ReviewView({ sessionId, onHome, onReport }: { sessionId: string;
               </div>
             </div>
           </div>
+
+          {review.measures && (
+            <Card className="mt-6">
+              <SessionSummaryCard title={s.measures.title} measures={review.measures} sessionId={review.id} onSeek={watch} />
+            </Card>
+          )}
 
           <Card aria-labelledby="channels-summary" className="mt-6">
             <SectionTitle id="channels-summary">{s.review.channelsTitle}</SectionTitle>

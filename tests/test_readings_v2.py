@@ -44,8 +44,8 @@ class PostureFeatureTests(unittest.TestCase):
     def test_lying_needs_a_horizontal_body_and_legs_that_do_not_hang(self):
         from aba_demo.posture_features import classify_posture_v2
 
-        self.assertEqual(classify_posture_v2(None, 90.0, None), 'lying')
         self.assertEqual(classify_posture_v2(None, 85.0, 80.0), 'lying')
+        self.assertEqual(classify_posture_v2(None, 90.0, None), 'not_measurable')  # thighs unseen
         self.assertEqual(classify_posture_v2(None, 85.0, 10.0), 'not_measurable')  # bent over, legs down
         self.assertEqual(classify_posture_v2(None, 160.0, None), 'not_measurable')  # head below hips
         self.assertEqual(classify_posture_v2(-0.2, 10.0, 80.0), 'sitting')
