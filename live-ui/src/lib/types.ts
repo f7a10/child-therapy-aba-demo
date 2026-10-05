@@ -191,6 +191,8 @@ export interface LibrarySession {
   channels: ChannelName[];
   moments: number;
   flags: number;
+  /** Moments the therapist has already marked. */
+  reviewed: number;
 }
 
 /** One timeline entry of an analysed session (aba_demo/session_timeline.py). */
@@ -233,6 +235,16 @@ export interface ReviewPayload {
   skipped: Partial<Record<ChannelName, string>>;
   summary: Partial<Record<ChannelName, ChannelSummary>>;
   entries: ReviewEntry[];
+  /** The therapist's marks, by moment id (the moment's first entry id). */
+  clinician: Record<string, ClinicianMark>;
+}
+
+export type Verdict = "confirmed" | "not_seen" | "unsure";
+
+export interface ClinicianMark {
+  verdict: Verdict;
+  note: string;
+  updated: string;
 }
 
 export type AnalysisState = "preparing" | "select" | "running" | "reselect" | "done" | "failed" | "cancelled";

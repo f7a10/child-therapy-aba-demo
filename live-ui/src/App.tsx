@@ -3,6 +3,7 @@ import { AnimatePresence, MotionConfig } from "motion/react";
 import { AnalysisView } from "./components/AnalysisView";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { Home } from "./components/Home";
+import { ReportView } from "./components/ReportView";
 import { ReviewView } from "./components/ReviewView";
 import { TopBar } from "./components/TopBar";
 import { Workspace } from "./components/Workspace";
@@ -10,11 +11,11 @@ import { useI18n } from "./lib/i18n";
 import { useLiveSession } from "./lib/useLiveSession";
 
 /** Pages: home, one analysis in progress, or the review of an analysed session. */
-type Route = { page: "home" } | { page: "analysis"; id: string } | { page: "review"; id: string };
+type Route = { page: "home" } | { page: "analysis" | "review" | "report"; id: string };
 
 function readRoute(): Route {
-  const match = /^#\/(analysis|review)\/([\w-]{1,80})$/.exec(window.location.hash);
-  return match ? { page: match[1] as "analysis" | "review", id: match[2]! } : { page: "home" };
+  const match = /^#\/(analysis|review|report)\/([\w-]{1,80})$/.exec(window.location.hash);
+  return match ? { page: match[1] as "analysis" | "review" | "report", id: match[2]! } : { page: "home" };
 }
 
 export default function App() {
@@ -77,7 +78,14 @@ export default function App() {
                 onReview={(id) => go({ page: "review", id })}
               />
             ) : route.page === "review" ? (
-              <ReviewView key={`review-${route.id}`} sessionId={route.id} onHome={() => go({ page: "home" })} />
+              <ReviewView
+                key={`review-${route.id}`}
+                sessionId={route.id}
+                onHome={() => go({ page: "home" })}
+                onReport={() => go({ page: "report", id: route.id })}
+              />
+            ) : route.page === "report" ? (
+              <ReportView key={`report-${route.id}`} sessionId={route.id} onBack={() => go({ page: "review", id: route.id })} />
             ) : (
               <Home
                 key="home"
@@ -89,7 +97,7 @@ export default function App() {
             )}
           </AnimatePresence>
         </div>
-        <footer className="mx-auto max-w-[1440px] px-5 pb-8 text-xs text-faint lg:px-8">{s.app.footer}</footer>
+        <footer className="mx-auto max-w-[1440px] px-5 pb-8 text-xs text-faint lg:px-8 print:hidden">{s.app.footer}</footer>
       </div>
       <ConfirmDialog
         open={confirmLeave}

@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { motion } from "motion/react";
-import { Activity, ArrowLeft, Compass, MessageSquareText, PersonStanding } from "lucide-react";
+import { Activity, ArrowLeft, Compass, FileText, MessageSquareText, PersonStanding } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { library } from "../lib/api";
 import { formatClock, formatLength } from "../lib/format";
 import { useI18n } from "../lib/i18n";
-import { CHANNELS, type ChannelEntry, type ChannelName, type ReviewPayload } from "../lib/types";
+import { groupEntries } from "../lib/grouping";
+import { CHANNELS, type ChannelEntry, type ChannelName, type ClinicianMark, type ReviewPayload, type Verdict } from "../lib/types";
 import { ReviewTimeline } from "./ReviewTimeline";
 import { SessionStrip } from "./SessionStrip";
-import { Card, SectionTitle, cx } from "./ui";
+import { Button, Card, SectionTitle, cx } from "./ui";
 
 const ICON: Record<ChannelName, LucideIcon> = {
   posture: PersonStanding,
@@ -21,16 +22,26 @@ const ICON: Record<ChannelName, LucideIcon> = {
 const LEAD_IN_S = 2;
 
 /** Review of one analysed session: its video, the channel lanes and the moments. */
-export function ReviewView({ sessionId, onHome }: { sessionId: string; onHome: () => void }) {
+export function ReviewView({ sessionId, onHome, onReport }: { sessionId: string; onHome: () => void; onReport: () => void }) {
   const { s, language } = useI18n();
   const [review, setReview] = useState<ReviewPayload | null>(null);
   const [failed, setFailed] = useState(false);
   const [videoTime, setVideoTime] = useState(0);
+  const [marks, setMarks] = useState<Record<string, ClinicianMark>>({});
   const video = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    library.review(sessionId).then(setReview, () => setFailed(true));
+    library.review(sessionId).then((payload) => {
+      setReview(payload);
+      setMarks(payload.clinician);
+    }, () => setFailed(true));
   }, [sessionId]);
+
+  // The server returns every mark after a change, so the page always shows what is stored.
+  const mark = async (momentId: string, verdict: Verdict | null, note: string) => {
+    const result = await library.mark(sessionId, momentId, verdict, note);
+    setMarks(result.clinician);
+  };
 
   // The playhead follows the video smoothly while it plays.
   useEffect(() => {
@@ -47,6 +58,8 @@ export function ReviewView({ sessionId, onHome }: { sessionId: string; onHome: (
     () => (review?.entries ?? []).map((entry) => ({ ...entry, event_id: entry.source_event_id })),
     [review],
   );
+  const momentCount = useMemo(() => groupEntries(entries).length, [entries]);
+  const reviewed = Object.keys(marks).length;
 
   const seek = (time: number) => {
     if (video.current) video.current.currentTime = time;
@@ -89,13 +102,18 @@ export function ReviewView({ sessionId, onHome }: { sessionId: string; onHome: (
               <h1 className="text-2xl font-semibold tracking-tight">{review.title}</h1>
               {date && <p className="mt-1 text-sm text-muted">{s.review.analysed(date)}</p>}
             </div>
-            <dl className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-              <Fact label={s.review.duration} value={<span dir="ltr">{formatLength(review.duration)}</span>} />
-              <Fact label={s.review.activity} value={s.activity[review.activity]} />
-              {review.child_confirmed_fraction !== null && (
-                <Fact label={s.review.childConfirmed} value={`${Math.round(review.child_confirmed_fraction * 100)}%`} />
-              )}
-            </dl>
+            <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
+              <dl className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+                <Fact label={s.review.duration} value={<span dir="ltr">{formatLength(review.duration)}</span>} />
+                <Fact label={s.review.activity} value={s.activity[review.activity]} />
+                {review.child_confirmed_fraction !== null && (
+                  <Fact label={s.review.childConfirmed} value={`${Math.round(review.child_confirmed_fraction * 100)}%`} />
+                )}
+              </dl>
+              <Button onClick={onReport} icon={<FileText className="size-4" aria-hidden />}>
+                {s.verdict.report}
+              </Button>
+            </div>
           </header>
 
           {/* The moments sit beside the video and scroll within its height, so watching one needs no page scroll. */}
@@ -124,7 +142,22 @@ export function ReviewView({ sessionId, onHome }: { sessionId: string; onHome: (
 
             <div className="relative min-w-0">
               <div className="xl:absolute xl:inset-0">
-                <SessionStrip entries={entries} duration={review.duration} videoTime={videoTime} onWatch={watch} hideBar fill title={s.review.momentsTitle} />
+                <SessionStrip
+                  entries={entries}
+                  duration={review.duration}
+                  videoTime={videoTime}
+                  onWatch={watch}
+                  hideBar
+                  fill
+                  title={s.review.momentsTitle}
+                  marks={marks}
+                  onMark={mark}
+                  action={momentCount > 0 && (
+                    <span className={cx("text-xs tabular", reviewed === momentCount ? "font-medium text-positive" : "text-faint")}>
+                      {s.verdict.progress(reviewed, momentCount)}
+                    </span>
+                  )}
+                />
               </div>
             </div>
           </div>

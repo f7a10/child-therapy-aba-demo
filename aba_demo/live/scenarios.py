@@ -58,7 +58,7 @@ class ReplayScenario:
     kind = "precomputed"
 
     def __init__(self, video, observations, channels=(), *, scenario_id=None, title=None,
-                 activity="table", created=None, skipped=None):
+                 activity="table", created=None, skipped=None, folder=None):
         if scenario_id is not None:
             self.id = scenario_id
         if activity not in ACTIVITIES:
@@ -66,6 +66,8 @@ class ReplayScenario:
         self.activity = activity
         self.created = created
         self.skipped = dict(skipped or {})
+        # The library folder holding the session (where the therapist's review is kept), if any.
+        self.folder = None if folder is None else Path(folder)
         self.video = Path(video)
         self.observations = Path(observations)
         digest = file_sha256(self.video)
@@ -153,7 +155,7 @@ def load_session_library(root):
                 channels=[folder / name for name in manifest["channels"]],
                 scenario_id=session_id_for(folder), title=manifest["title"],
                 activity=manifest.get("activity", "table"), created=manifest.get("created"),
-                skipped=manifest.get("skipped")))
+                skipped=manifest.get("skipped"), folder=folder))
         except (OSError, ValueError, TypeError, KeyError) as error:
             raise ValueError(f"Recorded session '{folder.name}': {error}") from None
     return sessions

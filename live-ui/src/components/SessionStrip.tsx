@@ -1,9 +1,11 @@
 import { useEffect, useRef } from "react";
+import type { ReactNode } from "react";
 import { TriangleAlert } from "lucide-react";
 import { formatClock } from "../lib/format";
 import { groupEntries } from "../lib/grouping";
 import { contextDetails, contextStory, titleCase, useI18n, type ContextStory } from "../lib/i18n";
-import type { ChannelEntry } from "../lib/types";
+import type { ChannelEntry, ClinicianMark, Verdict } from "../lib/types";
+import { MomentReview } from "./MomentReview";
 import { Card, SectionTitle, cx } from "./ui";
 
 /** Seconds around a moment during which the playing video counts as being at it. */
@@ -14,7 +16,7 @@ const ACTIVE_MARGIN_S = 2;
  * the session timeline and as one line per moment. Context notes are labeled as
  * model suggestions. Only events already released by the server are shown.
  */
-export function SessionStrip({ entries, duration, videoTime, onWatch, hideBar = false, fill = false, title }: {
+export function SessionStrip({ entries, duration, videoTime, onWatch, hideBar = false, fill = false, title, marks, onMark, action }: {
   entries: ChannelEntry[];
   duration: number | null;
   videoTime: number | null;
@@ -25,6 +27,11 @@ export function SessionStrip({ entries, duration, videoTime, onWatch, hideBar = 
   /** Fill the parent's height and scroll the list inside it (the review page's side panel). */
   fill?: boolean;
   title?: string;
+  /** Review only: the therapist's marks by moment id (the moment's first entry id), and how to change one. */
+  marks?: Record<string, ClinicianMark>;
+  onMark?: (momentId: string, verdict: Verdict | null, note: string) => Promise<void>;
+  /** Shown at the end of the title row instead of the moment count. */
+  action?: ReactNode;
 }) {
   const { s } = useI18n();
   const groups = groupEntries(entries);
@@ -45,7 +52,7 @@ export function SessionStrip({ entries, duration, videoTime, onWatch, hideBar = 
   }, [active]);
   return (
     <Card aria-labelledby="strip-title" className={cx(fill && "flex h-full flex-col")}>
-      <SectionTitle id="strip-title" action={<span className="text-xs text-faint tabular">{groups.length}</span>}>
+      <SectionTitle id="strip-title" action={action ?? <span className="text-xs text-faint tabular">{groups.length}</span>}>
         {title ?? s.strip.title}
       </SectionTitle>
       <div className={cx("px-5 pb-5", fill && "flex min-h-0 flex-1 flex-col")}>
@@ -106,6 +113,12 @@ export function SessionStrip({ entries, duration, videoTime, onWatch, hideBar = 
                       {notes.length > 0 && <> · <span className="italic">{s.strip.suggestion}: {notes.join(s.dir === "rtl" ? "؛ " : "; ")}</span></>}
                     </p>
                     {stories.map((story, index) => <ContextLines key={index} story={story} />)}
+                    {onMark && (
+                      <MomentReview
+                        mark={marks?.[group.entries[0]!.entry_id]}
+                        onMark={(verdict, note) => onMark(group.entries[0]!.entry_id, verdict, note)}
+                      />
+                    )}
                   </div>
                   {onWatch && (
                     <button
@@ -127,7 +140,7 @@ export function SessionStrip({ entries, duration, videoTime, onWatch, hideBar = 
 }
 
 /** A v2 context note: what the nearest adult did before and after, and the model's view of the child. */
-function ContextLines({ story }: { story: ContextStory }) {
+export function ContextLines({ story }: { story: ContextStory }) {
   const { s } = useI18n();
   const line = (label: string, text: string, experimental: string) =>
     text || experimental ? (

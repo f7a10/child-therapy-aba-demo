@@ -1,4 +1,14 @@
-import type { Activity, AnalysisStatus, Command, LibrarySession, ReviewPayload, Scenario, SessionSnapshot } from "./types";
+import type {
+  Activity,
+  AnalysisStatus,
+  ClinicianMark,
+  Command,
+  LibrarySession,
+  ReviewPayload,
+  Scenario,
+  SessionSnapshot,
+  Verdict,
+} from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -42,6 +52,12 @@ export const library = {
   list: () => request<{ sessions: LibrarySession[]; analysis: boolean }>("/api/library"),
   review: (id: string) => request<ReviewPayload>(`/api/library/${encodeURIComponent(id)}`),
   videoUrl: (id: string) => `/api/library/${encodeURIComponent(id)}/video`,
+  thumbnailUrl: (id: string) => `/api/library/${encodeURIComponent(id)}/thumbnail`,
+  mark: (id: string, momentId: string, verdict: Verdict | null, note = "") =>
+    request<{ clinician: Record<string, ClinicianMark> }>(
+      `/api/library/${encodeURIComponent(id)}/moments/${encodeURIComponent(momentId)}`,
+      { method: "PUT", body: JSON.stringify({ verdict, note }) },
+    ),
 };
 
 export interface Selection {

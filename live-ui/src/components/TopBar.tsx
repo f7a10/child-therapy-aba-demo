@@ -47,7 +47,7 @@ export function TopBar({ connection, sessionId, canGoHome, onHome, providerKind 
     </>
   );
   return (
-    <header className="sticky top-0 z-30 border-b border-line bg-bg/80 backdrop-blur-xl">
+    <header className="sticky top-0 z-30 border-b border-line bg-bg/80 backdrop-blur-xl print:hidden">
       <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-4 px-5 lg:px-8">
         {canGoHome ? (
           <button

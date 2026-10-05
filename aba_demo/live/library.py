@@ -7,11 +7,18 @@ every channel event with its level from the therapist's activity, the moments
 they form, how much of the session each channel could measure, and the measured
 state bands (e.g. sitting / standing) so a session without events still shows
 what was observed. Nothing here analyses video.
+
+The therapist's own review of each moment (confirmed / not seen / unsure, and
+a short note) is kept next to the session in ``clinician_review.json``. It is
+bound to the video and channel bytes it was given for, never changes a channel
+document, and is dropped if the session it was written for no longer matches.
 """
 import hashlib
 import json
+import os
 import re
 import threading
+from datetime import datetime
 from pathlib import Path
 
 from ..movement_windows import decoded_seconds
@@ -30,6 +37,14 @@ BAND_STATES = {
     'orientation': frozenset({'toward', 'away'}),
 }
 MAX_BANDS = 4000
+REVIEW_NAME = 'clinician_review.json'
+REVIEW_KIND = 'clinician_review'
+REVIEW_SCHEMA_VERSION = 1
+VERDICTS = frozenset({'confirmed', 'not_seen', 'unsure'})
+MAX_NOTE_LENGTH = 500
+THUMBNAIL_WIDTH = 320
+# Where the library card's still frame is taken, as a fraction of the session (past any dark opening).
+THUMBNAIL_AT = 0.15
 _FOLDER_CHARACTERS = re.compile(r'[^A-Za-z0-9]+')
 
 
@@ -86,7 +101,47 @@ def review_payload(scenario):
         'summary': {name: channel_summary(name, document, decoded)
                     for name, (document, _) in channels.items()},
         'entries': timeline['entries'], 'groups': timeline['groups'],
+        'binding': {'source_sha256': scenario._digest,
+                    'channels': {name: sha for name, (_, sha) in sorted(channels.items())}},
     }
+
+
+def _valid_mark(mark):
+    return (isinstance(mark, dict) and set(mark) == {'verdict', 'note', 'updated'}
+            and mark['verdict'] in VERDICTS and isinstance(mark['note'], str)
+            and len(mark['note']) <= MAX_NOTE_LENGTH and isinstance(mark['updated'], str))
+
+
+def read_clinician_review(path, binding, moment_ids):
+    """The therapist's marks for this exact session, by moment id ({} if none or stale)."""
+    try:
+        document = json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+    if (not isinstance(document, dict) or document.get('kind') != REVIEW_KIND
+            or document.get('schema_version') != REVIEW_SCHEMA_VERSION
+            or document.get('binding') != binding or not isinstance(document.get('moments'), dict)):
+        return {}
+    return {key: mark for key, mark in document['moments'].items()
+            if key in moment_ids and _valid_mark(mark)}
+
+
+def thumbnail_jpeg(video, at_seconds, width=THUMBNAIL_WIDTH):
+    """One small JPEG still of the video, or None if the frame cannot be read."""
+    import cv2
+
+    capture = cv2.VideoCapture(str(video))
+    try:
+        capture.set(cv2.CAP_PROP_POS_MSEC, max(0.0, at_seconds) * 1000.0)
+        ok, frame = capture.read()
+    finally:
+        capture.release()
+    if not ok or frame is None:
+        return None
+    height = max(1, round(frame.shape[0] * width / frame.shape[1]))
+    frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+    ok, data = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    return data.tobytes() if ok else None
 
 
 class SessionLibrary:
@@ -98,6 +153,8 @@ class SessionLibrary:
         self._lock = threading.Lock()
         self._sessions = {}
         self._payloads = {}
+        self._thumbnails = {}
+        self._review_lock = threading.Lock()
         self.reload()
 
     def reload(self):
@@ -105,6 +162,7 @@ class SessionLibrary:
         with self._lock:
             self._sessions = sessions
             self._payloads = {}
+            self._thumbnails = {}
 
     def new_folder(self, title, stamp):
         """A fresh, empty session folder named after the title and a timestamp."""
@@ -128,7 +186,7 @@ class SessionLibrary:
             raise KeyError(session_id)
         return session
 
-    def review(self, session_id):
+    def _payload(self, session_id):
         session = self.get(session_id)
         with self._lock:
             cached = self._payloads.get(session_id)
@@ -136,7 +194,64 @@ class SessionLibrary:
             cached = review_payload(session)
             with self._lock:
                 self._payloads[session_id] = cached
-        return cached
+        return session, cached
+
+    def review(self, session_id):
+        """The review payload plus the therapist's marks so far (read fresh each time)."""
+        session, payload = self._payload(session_id)
+        return {**payload, 'clinician': self._marks(session, payload)}
+
+    @staticmethod
+    def _moment_ids(payload):
+        # A moment is named by its first entry, which stays the same while its channel files do.
+        return {group['entry_ids'][0] for group in payload['groups']}
+
+    def _marks(self, session, payload):
+        if session.folder is None:
+            return {}
+        return read_clinician_review(session.folder / REVIEW_NAME, payload['binding'],
+                                     self._moment_ids(payload))
+
+    def mark(self, session_id, moment_id, verdict, note=''):
+        """Record (or clear, with verdict None) the therapist's view of one moment."""
+        session, payload = self._payload(session_id)
+        if session.folder is None:
+            raise ValueError('review_not_stored')
+        if moment_id not in self._moment_ids(payload):
+            raise KeyError(moment_id)
+        note = (note or '').strip()
+        if verdict is not None and verdict not in VERDICTS:
+            raise ValueError('invalid_verdict')
+        if len(note) > MAX_NOTE_LENGTH:
+            raise ValueError('note_too_long')
+        if verdict is None and note:
+            raise ValueError('note_needs_verdict')
+        with self._review_lock:
+            marks = self._marks(session, payload)
+            if verdict is None:
+                marks.pop(moment_id, None)
+            else:
+                marks[moment_id] = {'verdict': verdict, 'note': note,
+                                    'updated': datetime.now().isoformat(timespec='seconds')}
+            document = {'kind': REVIEW_KIND, 'schema_version': REVIEW_SCHEMA_VERSION,
+                        'session_id': session_id, 'binding': payload['binding'],
+                        'moments': dict(sorted(marks.items()))}
+            path = session.folder / REVIEW_NAME
+            partial = path.with_suffix('.partial')
+            partial.write_text(json.dumps(document, ensure_ascii=False, indent=1), encoding='utf-8')
+            os.replace(partial, path)
+        return marks
+
+    def thumbnail(self, session_id):
+        """A small still of the session's video for the library list (kept in memory)."""
+        session, payload = self._payload(session_id)
+        with self._lock:
+            cached = self._thumbnails.get(session_id)
+        if cached is None:
+            cached = thumbnail_jpeg(session.video_path(), payload['decoded_seconds'] * THUMBNAIL_AT) or b''
+            with self._lock:
+                self._thumbnails[session_id] = cached
+        return cached or None
 
     def list(self):
         with self._lock:
@@ -149,6 +264,7 @@ class SessionLibrary:
                 'created': session.created, 'duration': payload['duration'],
                 'channels': payload['channels'], 'moments': len(payload['groups']),
                 'flags': sum(group['level'] == 'flag' for group in payload['groups']),
+                'reviewed': len(payload['clinician']),
             })
         # Newest analyses first; sessions without a date keep their folder order at the end.
         items.sort(key=lambda item: item['created'] or '', reverse=True)

@@ -40,6 +40,12 @@ class Selection(BaseModel):
     title: str | None = Field(default=None, max_length=120)
 
 
+class MomentMark(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    verdict: Literal["confirmed", "not_seen", "unsure"] | None
+    note: str = Field(default="", max_length=500)
+
+
 class SessionCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     command: Literal[COMMANDS]
@@ -181,6 +187,25 @@ def create_app(manager: SessionManager | None = None, port: int = DEFAULT_PORT,
         except KeyError:
             raise SessionNotFound(session_id) from None
         return FileResponse(video, headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/library/{session_id}/thumbnail")
+    async def library_thumbnail(session_id: str):
+        try:
+            image = await asyncio.to_thread(_library().thumbnail, session_id)
+        except KeyError:
+            raise SessionNotFound(session_id) from None
+        if image is None:
+            return _error(404, "No still for this session")
+        return Response(image, media_type="image/jpeg")
+
+    @app.put("/api/library/{session_id}/moments/{moment_id}")
+    async def library_mark(session_id: str, moment_id: str, body: MomentMark):
+        try:
+            marks = await asyncio.to_thread(_library().mark, session_id, moment_id,
+                                            body.verdict, body.note)
+        except KeyError:
+            raise SessionNotFound(session_id) from None
+        return {"clinician": marks}
 
     # ----- in-app analysis of a new video -----
 

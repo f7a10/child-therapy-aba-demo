@@ -211,9 +211,7 @@ function LibraryList({ sessions, onReview }: { sessions: LibrarySession[] | null
                 onClick={() => onReview(session.id)}
                 className="group flex w-full items-center gap-4 rounded-xl border border-line bg-surface px-4 py-3 text-start transition-colors hover:border-accent/50 hover:bg-surface-2"
               >
-                <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-surface-2 text-accent ring-1 ring-line">
-                  <FileVideo className="size-5" aria-hidden />
-                </span>
+                <Thumbnail id={session.id} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{session.title}</span>
                   <span className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
@@ -234,6 +232,11 @@ function LibraryList({ sessions, onReview }: { sessions: LibrarySession[] | null
                       {session.flags ? s.home.flags(session.flags) : s.home.moments(session.moments)}
                     </Pill>
                   )}
+                  {session.moments > 0 && session.reviewed > 0 && (
+                    <span className={cx("text-[11px] tabular", session.reviewed === session.moments ? "font-medium text-positive" : "text-faint")}>
+                      {s.home.reviewed(session.reviewed, session.moments)}
+                    </span>
+                  )}
                   <span className="inline-flex items-center gap-1 text-xs font-medium text-accent">
                     {s.home.open}
                     <ArrowRight className="size-3.5 rtl:rotate-180" aria-hidden />
@@ -245,6 +248,20 @@ function LibraryList({ sessions, onReview }: { sessions: LibrarySession[] | null
         </ul>
       )}
     </Card>
+  );
+}
+
+/** A small still of the session's video, or the video icon when there is none. */
+function Thumbnail({ id }: { id: string }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <span className="grid h-12 w-20 shrink-0 place-items-center overflow-hidden rounded-lg bg-surface-2 text-accent ring-1 ring-line">
+      {failed ? (
+        <FileVideo className="size-5" aria-hidden />
+      ) : (
+        <img src={library.thumbnailUrl(id)} alt="" loading="lazy" onError={() => setFailed(true)} className="size-full object-cover" />
+      )}
+    </span>
   );
 }
 
