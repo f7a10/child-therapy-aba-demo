@@ -6,7 +6,7 @@ import { analysis, ApiError } from "../lib/api";
 import { formatClock } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import type { Activity, AnalysisStatus, StageStatus } from "../lib/types";
-import { freePoint } from "../lib/selection";
+import { AREA_NEAR_MAX, areaGap, freePoint } from "../lib/selection";
 import { FramePicker, boxesAt, type Click, type Region } from "./FramePicker";
 import { Button, Card, cx } from "./ui";
 
@@ -256,6 +256,17 @@ function Selector({ status, error, onSelect, onSkip, onContinue, onCancel }: {
             </Step>
             <Step n={3} title={s.analysis.taskArea} done={Boolean(region)}>
               <span className="text-xs text-faint">{s.analysis.taskHint}</span>
+              {region && click && (() => {
+                // Checked against the child selected on this frame: the area should take in the child's seat.
+                const box = frame.boxes.find((b) => b.id === click.boxId);
+                if (!box) return null;
+                const inside = areaGap(box.xyxy, region) <= AREA_NEAR_MAX;
+                return (
+                  <p role="status" className={cx("rounded-lg px-2.5 py-1.5 text-xs", inside ? "bg-positive-soft text-positive" : "bg-attention-soft text-attention")}>
+                    {inside ? s.analysis.areaOk : s.analysis.areaOff}
+                  </p>
+                );
+              })()}
               <div className="flex gap-2">
                 <Button variant={drawing ? "primary" : "secondary"} onClick={() => setDrawing(!drawing)}>
                   {drawing ? s.analysis.drawing : region ? s.analysis.redraw : s.analysis.draw}

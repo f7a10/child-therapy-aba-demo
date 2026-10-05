@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boxesAt, freePoint } from "./selection";
+import { areaGap, boxesAt, freePoint } from "./selection";
 import type { FrameBox } from "./types";
 
 const box = (id: number, xyxy: [number, number, number, number]) => ({ id, xyxy }) as FrameBox;
@@ -24,5 +24,12 @@ describe("freePoint", () => {
     const covered = [box(1, [0, 0, 1, 1]), box(2, [0.2, 0.2, 0.4, 0.4])];
     expect(freePoint(covered, 2, { x: 0.3, y: 0.3 })).toBeNull();
     expect(freePoint(covered, 9, { x: 0.3, y: 0.3 })).toBeNull();
+  });
+});
+
+describe("areaGap", () => {
+  it("is zero when the child touches the area and grows with the distance", () => {
+    expect(areaGap([0.1, 0.1, 0.3, 0.5], [0.2, 0.2, 0.6, 0.6])).toBe(0);
+    expect(areaGap([0.0, 0.0, 0.1, 0.4], [0.3, 0.0, 0.5, 0.4])).toBeCloseTo(0.5);
   });
 });

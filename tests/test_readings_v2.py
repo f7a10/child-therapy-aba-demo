@@ -182,21 +182,49 @@ class WorkAreaTests(unittest.TestCase):
             source = hashlib.sha256(video.read_bytes()).hexdigest()
             tracking = root / 'observations.pending.json'
             tracking.write_text(json.dumps(candidate(source)), encoding='utf-8')
+            # The camera pans right by 0.03 frame heights at frame 30, and has no estimate at frame 40.
             report = read_orientation(video, tracking, root / 'out', task_region=[0.0, 0.5, 0.5, 1.0],
-                                      detector=FakeDetector(), motion_estimator=FakeMotion(moving={30}),
+                                      detector=FakeDetector(), motion_estimator=FakeMotion(moving={30}, lost={40}),
                                       frame_reader_factory=OrientationFrames)
             document = json.loads((root / 'out' / 'orientation.pending.json').read_text(encoding='utf-8'))
-        self.assertEqual(document['schema_version'], 2)
+        self.assertEqual(document['schema_version'], 3)
         validate_orientation_document(document, 6.1)
-        states = [s['area_state'] for s in document['samples']]
-        self.assertEqual(states[0], 'not_measurable')  # no camera step yet
-        self.assertEqual(states[6], 'not_measurable')  # the camera moved
-        self.assertEqual(set(states[1:6] + states[7:]), {'at_area'})
-        self.assertEqual(report['area_counts']['at_area'], len(states) - 2)
+        samples = document['samples']
+        states = [s['area_state'] for s in samples]
+        self.assertEqual(states[0], 'at_area')          # the region as drawn needs no camera step
+        self.assertEqual(states[8], 'not_measurable')   # no camera estimate for this step
+        self.assertIsNone(samples[8]['area_region'])
+        self.assertEqual(set(states[:8] + states[9:]), {'at_area'})
+        self.assertEqual(report['area_counts']['at_area'], len(states) - 1)
+        # Each frame is matched to the drawing frame, so shifts do not add up: the fake
+        # camera is 0.001 away from it except at frame 30 (0.03, x in frame-height units).
+        drawn = samples[0]['area_region'][0]
+        self.assertAlmostEqual((samples[5]['area_region'][0] - drawn) * 160 / 90, 0.001, places=4)
+        self.assertAlmostEqual((samples[6]['area_region'][0] - drawn) * 160 / 90, 0.03, places=4)
+        self.assertAlmostEqual((samples[7]['area_region'][0] - drawn) * 160 / 90, 0.001, places=4)
         tampered = copy.deepcopy(document)
         tampered['samples'][3]['area_state'] = 'away_from_area'
         with self.assertRaises(ValueError):
             validate_orientation_document(tampered, 6.1)
+
+    def test_region_following_and_distance(self):
+        from aba_demo.orientation_features import (area_gap, area_state_v3, follow_region,
+                                                   region_in_frame)
+
+        region = [0.2, 0.2, 0.4, 0.4]
+        moved = follow_region(region, [1.0, 0.0, 0.1, 0.0, 1.0, -0.05], 2.0)
+        self.assertEqual([round(v, 3) for v in moved], [0.25, 0.15, 0.45, 0.35])
+        zoomed = follow_region(region, [1.1, 0.0, 0.0, 0.0, 1.1, 0.0], 1.0)
+        self.assertEqual([round(v, 3) for v in zoomed], [0.22, 0.22, 0.44, 0.44])
+        self.assertIsNone(follow_region(region, None, 1.0))
+        self.assertIsNone(follow_region(region, [1.6, 0.0, 0.0, 0.0, 1.6, 0.0], 1.0))  # implausible zoom
+        self.assertAlmostEqual(region_in_frame([0.8, 0.0, 1.2, 0.5]), 0.5)
+        self.assertEqual(area_gap([0.1, 0.1, 0.3, 0.5], [0.2, 0.2, 0.6, 0.6]), 0.0)       # overlapping
+        self.assertAlmostEqual(area_gap([0.0, 0.0, 0.1, 0.4], [0.3, 0.0, 0.5, 0.4]), 0.5)  # 0.2 away / 0.4 tall
+        self.assertEqual(area_state_v3(0.0), 'at_area')
+        self.assertEqual(area_state_v3(0.15), 'unclear')
+        self.assertEqual(area_state_v3(0.5), 'away_from_area')
+        self.assertEqual(area_state_v3(None), 'not_measurable')
 
 
 class MotionAndSummaryTests(unittest.TestCase):

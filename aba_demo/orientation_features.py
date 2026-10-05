@@ -23,6 +23,17 @@ lies inside the drawn region. At least ``AREA_AT_MIN`` is ``at_area``, at most
 keypoints (only the tracked box), so it is measurable whenever the child is
 identified and the camera is still (same camera gate as the head). It says where
 the body is, never what the child is doing there.
+
+Version 3 readings make the work area follow the camera and measure distance.
+The drawn region is placed in each frame by matching that frame's background
+directly to the frame it was drawn on (so small errors never add up); only
+when that match fails is it carried from the previous frame by the camera step.
+A handheld or panning camera so keeps it on the table. The state comes from the gap between the
+child box and the region, in child-box heights: touching or overlapping (at most
+``AREA_NEAR_MAX``) is ``at_area``, at least ``AREA_AWAY_MIN`` away is
+``away_from_area``, in between ``unclear``. Standing up next to the seat is not
+leaving the area (the posture channel reports that); walking off is. A step with
+no camera estimate, or a region carried out of the frame, is not measurable.
 """
 
 import math
@@ -50,6 +61,16 @@ AREA_AWAY_MAX = 0.10
 AREA_STATES = ('at_area', 'away_from_area', 'unclear', 'not_measurable')
 AREA_EVENT_KINDS = {('at_area', 'away_from_area'): 'left_work_area',
                     ('away_from_area', 'at_area'): 'returned_to_work_area'}
+AREA_NEAR_MAX = 0.05
+AREA_AWAY_MIN = 0.30
+# A step between neighbouring samples that changes scale more than this, or moves
+# more than a frame height, is treated as unknown rather than followed; a match to
+# the drawing frame may zoom and move more.
+MAX_FOLLOW_SCALE_CHANGE = 0.25
+MAX_FOLLOW_SHIFT = 1.0
+MAX_REFERENCE_SCALE_CHANGE = 0.6
+MAX_REFERENCE_SHIFT = 1.5
+MIN_REGION_IN_FRAME = 0.5
 
 
 def _finite(value):
@@ -206,6 +227,58 @@ def area_overlap(box, task_region):
     return width * height / ((box[2] - box[0]) * (box[3] - box[1]))
 
 
+def follow_region(region, step, aspect, *, max_scale_change=MAX_FOLLOW_SCALE_CHANGE,
+                  max_shift=MAX_FOLLOW_SHIFT):
+    """The region moved by one camera step (frame-height units, x scaled by ``aspect``).
+
+    Returns None when the step is missing or not plausible (the region is then
+    unknown for this sample, but the caller may keep the previous one).
+    """
+    if (not isinstance(step, (list, tuple)) or len(step) != 6 or not all(_finite(v) for v in step)
+            or not _finite(aspect) or aspect <= 0):
+        return None
+    a, b, tx, c, d, ty = step
+    if abs(math.hypot(a, c) - 1.0) > max_scale_change or math.hypot(tx, ty) > max_shift:
+        return None
+    corners = [(x * aspect, y) for x in (region[0], region[2]) for y in (region[1], region[3])]
+    moved = [(a * x + b * y + tx, c * x + d * y + ty) for x, y in corners]
+    xs, ys = [x / aspect for x, _ in moved], [y for _, y in moved]
+    return [min(xs), min(ys), max(xs), max(ys)]
+
+
+def region_in_frame(region):
+    """Share of the region's area that lies inside the frame (0 to 1)."""
+    width, height = region[2] - region[0], region[3] - region[1]
+    if width <= 0 or height <= 0:
+        return 0.0
+    inside = (max(0.0, min(1.0, region[2]) - max(0.0, region[0]))
+              * max(0.0, min(1.0, region[3]) - max(0.0, region[1])))
+    return inside / (width * height)
+
+
+def area_gap(box, region):
+    """Distance between the child box and the region in child-box heights (0 when touching)."""
+    if (not isinstance(box, (list, tuple)) or len(box) != 4 or not all(_finite(v) for v in box)
+            or box[2] <= box[0] or box[3] <= box[1]):
+        return None
+    dx = max(region[0] - box[2], box[0] - region[2], 0.0)
+    dy = max(region[1] - box[3], box[1] - region[3], 0.0)
+    return math.hypot(dx, dy) / (box[3] - box[1])
+
+
+def area_state_v3(gap, *, near_max=AREA_NEAR_MAX, away_min=AREA_AWAY_MIN):
+    """Work-area state from the distance to the (camera-followed) region."""
+    if not all(_finite(value) for value in (near_max, away_min)) or not 0 <= near_max < away_min:
+        raise ValueError('invalid_orientation_thresholds')
+    if gap is None:
+        return 'not_measurable'
+    if gap <= near_max:
+        return 'at_area'
+    if gap >= away_min:
+        return 'away_from_area'
+    return 'unclear'
+
+
 def area_state(overlap, shift, *, at_min=AREA_AT_MIN, away_max=AREA_AWAY_MAX,
                max_camera_shift=MAX_CAMERA_SHIFT):
     """Work-area state under a still camera; ``not_measurable`` otherwise."""
@@ -223,6 +296,10 @@ def area_state(overlap, shift, *, at_min=AREA_AT_MIN, away_max=AREA_AWAY_MAX,
 
 def area_states(samples, config):
     """Recompute every sample's work-area state (None for uncertain identity)."""
+    if 'area_near_max' in config:  # version 3: distance to the camera-followed region
+        return [None if sample['identity'] != 'confirmed' else area_state_v3(
+            sample['area_gap'], near_max=config['area_near_max'], away_min=config['area_away_min'])
+            for sample in samples]
     return [None if sample['identity'] != 'confirmed' else area_state(
         sample['area_overlap'], sample['camera_shift'], at_min=config['area_at_min'],
         away_max=config['area_away_max'], max_camera_shift=config['max_camera_shift'])

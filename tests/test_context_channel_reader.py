@@ -172,6 +172,14 @@ class ContextReaderTests(unittest.TestCase):
         self.assertEqual((report['read'], report['unread']), (0, 1))
         self.assertEqual(report['failure_codes'],
                          {'provider_response_invalid:invalid_context:enum': 2})
+        # A brief outage is tried once more after a short pause.
+        paused = []
+        report = read_context(self.video, tracking, [posture], self.folder / 'outage',
+                              {'table': FakeAdapter(['provider_unavailable', 'ok'])},
+                              activity_segments=SEGMENTS, model='m/x', provider='Wafer', max_requests=4,
+                              rate_limit_wait=30, frame_reader_factory=FakeReader, sleep=paused.append)
+        self.assertEqual((report['read'], report['requests_used']), (1, 2))
+        self.assertIn(5.0, paused)
         with self.assertRaises(OpenRouterContextError):
             self.read(FakeAdapter(['provider_credit_exhausted']), tracking, posture,
                       output='terminal')

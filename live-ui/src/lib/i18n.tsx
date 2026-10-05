@@ -149,6 +149,8 @@ const en = {
     stepChild: "Click the child on the frame",
     stepDetails: "Session details",
     redraw: "Redraw work area",
+    areaOk: "✓ The selected child is at the area you drew.",
+    areaOff: "The selected child is outside the area you drew, so the session would read \"away from the work area\". If the child is at the work now, draw the table together with the child's seat.",
     whichPerson: "That point is inside more than one person. Which one is the child?",
     person: (n: number) => `Person ${n}`,
     noFreePoint: "This person is fully covered by someone else on this frame. Skip ahead to a clearer frame.",
@@ -295,7 +297,7 @@ const en = {
     title: "Recording guide",
     intro: "Most unmeasured time comes from how the session was filmed. These steps let the readings see the child.",
     tips: [
-      { title: "A still camera", body: "Use a tripod and do not move or zoom during the session. A moving camera stops the work-area reading." },
+      { title: "A still camera", body: "Use a tripod and do not move or zoom during the session. The work area follows a moving camera, but a still one keeps every reading steadier." },
       { title: "From the side, at the child's height", body: "Place the camera beside the table at about 45 degrees, at seated-child height, 2 to 3 metres away. Avoid filming from behind the child." },
       { title: "The whole body in view", body: "Keep the legs and feet visible. A table between the camera and the child's legs hides the knees, the main cause of unmeasured posture." },
       { title: "Light and quality", body: "Landscape, 1080p, 30 frames per second, good light. Avoid a bright window behind the child." },
@@ -306,7 +308,7 @@ const en = {
       knees_hidden: "The child's knees were hidden for a large part of the session (often by the table). Next time, film from the side so the legs are visible.",
       body_hidden: "The child's body was often hidden by people or furniture. A wider or higher view may help.",
       child_lost: "The child was often not identified (out of view or covered). Keep the whole room area the child uses in the picture.",
-      camera_moving: "The camera moved during the session. Use a tripod and keep it still.",
+      camera_moving: "The camera moved a lot and the work area could not always be followed. Use a tripod and keep it still.",
     } as Record<string, string>,
     noHints: "No recording problems stood out in this session.",
   },
@@ -456,7 +458,7 @@ const en = {
   basis: {
     posture: "Sitting, standing or lying, from the child's own joints",
     movement: "Moving or still; large movement = more than one torso length",
-    orientation: "Body at the drawn work area; head direction when the face is seen",
+    orientation: "Body at or away from the drawn work area (follows the camera); head direction when the face is seen",
     context: "Model note on marked moments · suggestion only",
   } as Record<ChannelName, string>,
   kind: {
@@ -670,6 +672,8 @@ const ar: Strings = {
     stepChild: "اضغط على الطفل في الإطار",
     stepDetails: "تفاصيل الجلسة",
     redraw: "أعد رسم منطقة العمل",
+    areaOk: "✓ الطفل المحدد داخل المنطقة التي رسمتها.",
+    areaOff: "الطفل المحدد خارج المنطقة التي رسمتها، فستُقرأ الجلسة \"بعيد عن منطقة العمل\". إذا كان الطفل في مكان العمل الآن، ارسم الطاولة مع مقعد الطفل.",
     whichPerson: "هذه النقطة داخل أكثر من شخص. أيّهم الطفل؟",
     person: (n: number) => `الشخص ${n}`,
     noFreePoint: "هذا الشخص مغطّى بالكامل بشخص آخر في هذا الإطار. تقدّم إلى إطار أوضح.",
@@ -816,7 +820,7 @@ const ar: Strings = {
     title: "دليل التصوير",
     intro: "أغلب الوقت غير المقاس سببه طريقة تصوير الجلسة. هذه الخطوات تجعل القراءات ترى الطفل.",
     tips: [
-      { title: "كاميرا ثابتة", body: "استخدم حاملاً ثلاثياً ولا تحرّك الكاميرا أو تقرّب الصورة أثناء الجلسة. حركة الكاميرا توقف قراءة منطقة العمل." },
+      { title: "كاميرا ثابتة", body: "استخدم حاملاً ثلاثياً ولا تحرّك الكاميرا أو تقرّب الصورة أثناء الجلسة. منطقة العمل تتبع الكاميرا إذا تحركت، لكن الكاميرا الثابتة تجعل كل القراءات أدق." },
       { title: "من الجانب وعلى مستوى الطفل", body: "ضع الكاميرا بجانب الطاولة بزاوية 45 درجة تقريباً، على ارتفاع الطفل وهو جالس، وعلى بعد 2 إلى 3 أمتار. تجنّب التصوير من خلف الطفل." },
       { title: "الجسم كاملاً في الصورة", body: "اجعل الساقين والقدمين ظاهرة. الطاولة بين الكاميرا وساقي الطفل تخفي الركبتين، وهي السبب الأول لعدم قياس الوضعية." },
       { title: "الإضاءة والجودة", body: "تصوير عرضي، 1080p، 30 إطاراً في الثانية، وإضاءة جيدة. تجنّب نافذة مضيئة خلف الطفل." },
@@ -827,7 +831,7 @@ const ar: Strings = {
       knees_hidden: "ركبتا الطفل كانتا مخفيتين جزءاً كبيراً من الجلسة (غالباً بسبب الطاولة). في المرة القادمة صوّر من الجانب لتظهر الساقان.",
       body_hidden: "جسم الطفل كان مخفياً كثيراً بسبب أشخاص أو أثاث. قد تساعد زاوية أوسع أو أعلى.",
       child_lost: "لم يُحدَّد الطفل كثيراً (خرج من الصورة أو غُطّي). اجعل كامل المساحة التي يتحرك فيها الطفل داخل الصورة.",
-      camera_moving: "تحرّكت الكاميرا أثناء الجلسة. استخدم حاملاً ثلاثياً وأبقها ثابتة.",
+      camera_moving: "تحرّكت الكاميرا كثيراً ولم يمكن تتبّع منطقة العمل دائماً. استخدم حاملاً ثلاثياً وأبقها ثابتة.",
     },
     noHints: "لم تظهر مشاكل تصوير واضحة في هذه الجلسة.",
   },
@@ -977,7 +981,7 @@ const ar: Strings = {
   basis: {
     posture: "جلوس أو وقوف أو انبطاح، من مفاصل الطفل نفسه",
     movement: "يتحرك أو ساكن؛ الحركة الكبيرة = أكثر من طول جذع",
-    orientation: "الجسم عند منطقة العمل المرسومة؛ واتجاه الرأس حين يظهر الوجه",
+    orientation: "الجسم عند منطقة العمل المرسومة أو بعيد عنها (تتبع الكاميرا)؛ واتجاه الرأس حين يظهر الوجه",
     context: "ملاحظة نموذج على لحظات محددة · اقتراح فقط",
   },
   kind: {

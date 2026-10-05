@@ -18,10 +18,12 @@ from .channel_pass import check_output_dir, load_bound_candidate, run_pass
 from .movement_frames import SequentialFrameReader
 from .movement_windows import decoded_seconds
 from .orientation_features import (
-    AREA_AT_MIN, AREA_AWAY_MAX, AWAY_MIN_DEGREES, KEYPOINT_CONFIDENCE, MAX_CAMERA_SHIFT,
-    MAX_GAP_SECONDS, MIN_FACING_LENGTH, MIN_STABLE_SAMPLES, POSTURE_MAX_GAP_SECONDS,
-    POSTURE_MIN_STABLE_SAMPLES, TOWARD_MAX_DEGREES, area_overlap, area_states, camera_shift,
-    facing_measure, orientation_events_v2, orientation_states, valid_task_region)
+    AREA_AWAY_MIN, AREA_NEAR_MAX, AWAY_MIN_DEGREES, KEYPOINT_CONFIDENCE, MAX_CAMERA_SHIFT,
+    MAX_GAP_SECONDS, MAX_REFERENCE_SCALE_CHANGE, MAX_REFERENCE_SHIFT, MIN_FACING_LENGTH,
+    MIN_REGION_IN_FRAME, MIN_STABLE_SAMPLES,
+    POSTURE_MAX_GAP_SECONDS, POSTURE_MIN_STABLE_SAMPLES, TOWARD_MAX_DEGREES, area_gap, area_overlap,
+    area_states, camera_shift, facing_measure, follow_region, orientation_events_v2,
+    orientation_states, region_in_frame, valid_task_region)
 from .orientation_schema import encode_orientation_document
 from .posture_features import SITTING_MAX_RATIO, STANDING_MIN_RATIO, leg_ratio
 from .posture_reader import (MATCH_IOU_MIN, YoloPoseDetector, _child_keypoints,  # noqa: F401
@@ -49,8 +51,8 @@ class OrientationJob:
                  standing_min_ratio=STANDING_MIN_RATIO, sitting_max_ratio=SITTING_MAX_RATIO,
                  max_camera_shift=MAX_CAMERA_SHIFT,
                  posture_min_stable_samples=POSTURE_MIN_STABLE_SAMPLES,
-                 posture_max_gap_seconds=POSTURE_MAX_GAP_SECONDS, area_at_min=AREA_AT_MIN,
-                 area_away_max=AREA_AWAY_MAX):
+                 posture_max_gap_seconds=POSTURE_MAX_GAP_SECONDS, area_near_max=AREA_NEAR_MAX,
+                 area_away_min=AREA_AWAY_MIN):
         if not valid_task_region(task_region):
             raise ValueError('invalid_task_region')
         task_region = [float(value) for value in task_region]
@@ -68,40 +70,66 @@ class OrientationJob:
                        'max_camera_shift': max_camera_shift,
                        'posture_min_stable_samples': posture_min_stable_samples,
                        'posture_max_gap_seconds': posture_max_gap_seconds,
-                       'area_at_min': area_at_min, 'area_away_max': area_away_max}
+                       'area_near_max': area_near_max, 'area_away_min': area_away_min}
         self.samples, self.previous = [], None
+        # The drawn region as it moves with the camera, and the frame it was drawn on
+        # (the first sample); None until the first frame.
+        self.region = self.reference = None
 
     def step(self, number, row, index, frame, context):
         config = self.config
         image = frame.image  # every sample is decoded in its own turn: the reader only goes forward
         boxes = [box['xyxy'] for box in row['boxes']]
-        shift = (None if self.previous is None
-                 else camera_shift(context.estimate(self.motion_estimator, self.previous[0],
-                                                    self.previous[1], frame, boxes)))
+        step = (None if self.previous is None
+                else context.estimate(self.motion_estimator, self.previous[0], self.previous[1],
+                                      frame, boxes))
+        shift = camera_shift(step)
         self.previous = (frame, boxes)
+        width, height = image.size
+        # Follow the camera: match this frame's background to the drawing frame and
+        # place the drawn region there; if that fails, carry the last position by the
+        # step from the previous sample. With neither, the region is kept but this
+        # sample's work area is not measured.
+        known = True
+        if self.region is None:
+            self.region, self.reference = list(config['task_region']), (frame, boxes)
+        else:
+            direct = context.estimate(self.motion_estimator, self.reference[0], self.reference[1],
+                                      frame, boxes)
+            moved = follow_region(config['task_region'], direct, width / height,
+                                  max_scale_change=MAX_REFERENCE_SCALE_CHANGE,
+                                  max_shift=MAX_REFERENCE_SHIFT)
+            if moved is None:
+                moved = follow_region(self.region, step, width / height)
+            known = moved is not None
+            if known:
+                self.region = moved
+        region = ([round(value, 6) for value in self.region]
+                  if known and region_in_frame(self.region) >= MIN_REGION_IN_FRAME else None)
         if row['identity'] != 'confirmed':
             self.samples.append({'time': row['time'], 'frame_index': index,
                                  'identity': 'uncertain', 'state': None,
                                  'facing_angle': None, 'facing_length': None,
                                  'leg_ratio': None, 'camera_shift': None,
-                                 'area_overlap': None, 'area_state': None})
+                                 'area_overlap': None, 'area_state': None,
+                                 'area_region': region, 'area_gap': None})
             return
         target = [box['xyxy'] for box in row['boxes'] if box.get('id') == row['target_id']][0]
         points = _child_keypoints(frame.detections(), target, config['match_iou_min'])
-        width, height = image.size
         angle, length = facing_measure(points, config['task_region'], aspect=width / height,
                                        keypoint_confidence=config['keypoint_confidence'])
         ratio = leg_ratio(points, keypoint_confidence=config['keypoint_confidence'])
         self.samples.append({'time': row['time'], 'frame_index': index, 'identity': 'confirmed',
                              'state': None, 'facing_angle': angle, 'facing_length': length,
                              'leg_ratio': ratio, 'camera_shift': shift,
-                             'area_overlap': area_overlap(target, config['task_region']),
-                             'area_state': None})
+                             'area_overlap': None if region is None else area_overlap(target, region),
+                             'area_state': None, 'area_region': region,
+                             'area_gap': None if region is None else area_gap(target, region)})
 
     def finish(self):
         data, samples, config = self.data, self.samples, self.config
         source = data['source']
-        self.previous = None
+        self.previous = self.reference = None
         for sample, state, area in zip(samples, orientation_states(samples, config),
                                        area_states(samples, config)):
             sample['state'], sample['area_state'] = state, area
@@ -109,7 +137,7 @@ class OrientationJob:
                   for number, event in enumerate(orientation_events_v2(
                       samples, min_stable_samples=config['min_stable_samples'],
                       max_gap_seconds=config['max_gap_seconds']))]
-        document = {'schema_version': 2, 'kind': 'orientation_reading',
+        document = {'schema_version': 3, 'kind': 'orientation_reading',
                     'source_sha256': source['sha256'],
                     'tracking_candidate_sha256': self.tracking_sha, 'config': config,
                     'decoded_seconds': decoded_seconds(data), 'samples': samples,

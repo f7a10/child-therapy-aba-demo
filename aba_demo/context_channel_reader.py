@@ -31,6 +31,8 @@ from .openrouter_context import OpenRouterContextError
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 MAX_RATE_LIMIT_WAITS = 2
+# Pause before the one retry after a provider outage (capped by the rate-limit wait).
+RETRY_PAUSE_SECONDS = 5.0
 MAX_PARALLEL = 4
 
 
@@ -146,8 +148,12 @@ def send_windows(moments, windows, adapter_of, source_sha256, *, max_requests,
                 failure = error.code + (':' + error.detail if error.detail else '')
                 with lock:
                     failure_codes[failure] += 1
-                if error.code == 'provider_response_invalid' and not retried and retry:
+                # An invalid answer or a brief provider outage is tried once more.
+                if (error.code in ('provider_response_invalid', 'provider_unavailable')
+                        and not retried and retry):
                     retried = True
+                    if error.code == 'provider_unavailable' and rate_limit_wait:
+                        sleep(min(rate_limit_wait, RETRY_PAUSE_SECONDS))
                     continue
                 break
             if not isinstance(result, dict) or not isinstance(result.get('observation'), dict):

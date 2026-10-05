@@ -38,3 +38,13 @@ export function freePoint(boxes: FrameBox[], id: number, near: { x: number; y: n
   }
   return best;
 }
+
+/** Distance between a person box and a drawn area, in box heights (0 when they touch). Mirrors aba_demo area_gap. */
+export function areaGap(box: [number, number, number, number], region: [number, number, number, number]): number {
+  const dx = Math.max(region[0] - box[2], box[0] - region[2], 0);
+  const dy = Math.max(region[1] - box[3], box[1] - region[3], 0);
+  return Math.hypot(dx, dy) / Math.max(box[3] - box[1], 1e-9);
+}
+
+/** Within this distance the child counts as at the work area (aba_demo AREA_NEAR_MAX). */
+export const AREA_NEAR_MAX = 0.05;

@@ -349,7 +349,7 @@ class SessionLibrary:
 
     def _has_area(self, session):
         orientation = _channel_documents(session).get('orientation')
-        return bool(orientation and orientation.get('schema_version') == 2)
+        return bool(orientation and orientation.get('schema_version', 1) >= 2)
 
     def labels(self, session_id):
         """Label points, the labels so far and how the readings score against them."""
