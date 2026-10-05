@@ -278,7 +278,6 @@ function Selector({ status, error, onSelect, onSkip, onContinue, onCancel }: {
                 )}
               </div>
             </Step>
-            <p className="rounded-lg bg-surface-2 px-3 py-2 text-xs leading-relaxed text-muted">{s.analysis.contextNote}</p>
             <div className="grid gap-2">
               <Button variant="primary" size="lg" disabled={!click || !title.trim()} onClick={submit}>
                 {s.analysis.start}

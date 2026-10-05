@@ -107,7 +107,6 @@ export default function App() {
             )}
           </AnimatePresence>
         </div>
-        <footer className="mx-auto max-w-[1440px] px-5 pb-8 text-xs text-faint lg:px-8 print:hidden">{s.app.footer}</footer>
       </div>
       <ConfirmDialog
         open={confirmLeave}
