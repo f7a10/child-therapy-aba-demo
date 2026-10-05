@@ -21,21 +21,23 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from ..large_movement_features import motion_states
 from ..movement_windows import decoded_seconds
 from ..session_timeline import build_timeline
 from .scenarios import load_session_library, session_id_for
 
 # Sample states that count as measured, per channel document.
 MEASURED_STATES = {
-    'posture': frozenset({'sitting', 'standing'}),
+    'posture': frozenset({'sitting', 'standing', 'lying'}),
     'orientation': frozenset({'toward', 'away'}),
     'movement': frozenset({'measured', 'segment_start'}),
 }
 # Channels whose measured state is shown as bands on the review timeline.
 BAND_STATES = {
-    'posture': frozenset({'sitting', 'standing'}),
+    'posture': frozenset({'sitting', 'standing', 'lying'}),
     'orientation': frozenset({'toward', 'away'}),
 }
+AREA_STATES = frozenset({'at_area', 'away_from_area'})
 MAX_BANDS = 4000
 REVIEW_NAME = 'clinician_review.json'
 REVIEW_KIND = 'clinician_review'
@@ -63,6 +65,62 @@ def _bands(samples, end, states):
     return bands[:MAX_BANDS]
 
 
+def _runs(samples, end, labels):
+    """Consecutive samples with the same non-None label -> [start, end, label] runs."""
+    runs = []
+    for index, (sample, label) in enumerate(zip(samples, labels)):
+        if label is None:
+            continue
+        stop = samples[index + 1]['time'] if index + 1 < len(samples) else end
+        if runs and runs[-1][2] == label and abs(runs[-1][1] - sample['time']) < 1e-6:
+            runs[-1][1] = stop
+        else:
+            runs.append([sample['time'], stop, label])
+    return runs[:MAX_BANDS]
+
+
+def _gap_reason(name, sample):
+    """Why a sample shows no reading, as a short code for the review page."""
+    if sample.get('identity') != 'confirmed':
+        return 'identity'
+    if name == 'posture':
+        return sample.get('reason') or ('unclear' if sample.get('state') == 'unclear' else None)
+    if name == 'orientation':
+        return 'camera' if sample.get('area_state') == 'not_measurable' else 'unclear'
+    return 'no_pose' if sample.get('state') == 'not_measurable' else None
+
+
+def _shares(labels, total):
+    counts = {}
+    for label in labels:
+        if label is not None:
+            counts[label] = counts.get(label, 0) + 1
+    return {label: count / total for label, count in sorted(counts.items())}
+
+
+def _summary_v2(name, document, decoded):
+    """Bands, inferred time and the reason behind every gap (newer readings)."""
+    samples = document['samples']
+    total = len(samples)
+    if name == 'posture':
+        shown = [s['state'] if s['state'] in MEASURED_STATES['posture']
+                 else (f"held_{s['held']}" if s.get('held') else None) for s in samples]
+        measured = sum(s['state'] in MEASURED_STATES['posture'] for s in samples)
+        summary = {'coverage': measured / total, 'held': sum(bool(s.get('held')) for s in samples) / total}
+    elif name == 'orientation':
+        shown = [s['area_state'] if s['area_state'] in AREA_STATES else None for s in samples]
+        summary = {'coverage': sum(label is not None for label in shown) / total,
+                   'head_coverage': sum(s['state'] in MEASURED_STATES['orientation'] for s in samples) / total}
+    else:
+        shown = motion_states(samples)
+        summary = {'coverage': sum(s['state'] in MEASURED_STATES['movement'] for s in samples) / total}
+    gaps = [None if label is not None else _gap_reason(name, sample)
+            for sample, label in zip(samples, shown)]
+    summary.update(bands=_runs(samples, decoded, shown), gaps=_runs(samples, decoded, gaps),
+                   reasons=_shares(gaps, total))
+    return summary
+
+
 def channel_summary(name, document, decoded):
     """How much of the session the channel measured, and its state bands."""
     if name == 'context':
@@ -70,6 +128,9 @@ def channel_summary(name, document, decoded):
         return {'moments': len(moments),
                 'read': sum(moment.get('status') == 'read' for moment in moments)}
     samples = document.get('samples', [])
+    # Newer readings carry what the review needs (held posture, work area, body centre).
+    if samples and any(key in samples[0] for key in ('held', 'area_state', 'centre')):
+        return _summary_v2(name, document, decoded)
     measured = sum(sample.get('state') in MEASURED_STATES[name] for sample in samples)
     summary = {'coverage': measured / len(samples) if samples else 0.0}
     if name in BAND_STATES:

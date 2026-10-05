@@ -251,6 +251,10 @@ _EXPECTED = {
     ('posture', 'stand_to_sit'): (('child_position_after', {'seated'}, {'standing', 'walking'}),
                                   ('child_position_before', {'standing', 'walking'}, {'seated', 'on_floor'})),
     ('movement', 'large_movement'): (('child_position_after', {'walking', 'standing'}, {'seated'}),),
+    ('posture', 'to_lying'): (('child_position_after', {'on_floor'}, {'seated', 'standing', 'walking'}),
+                              ('child_position_before', {'seated', 'standing', 'walking'}, {'on_floor'})),
+    ('posture', 'from_lying'): (('child_position_after', {'seated', 'standing', 'walking'}, {'on_floor'}),
+                                ('child_position_before', {'on_floor'}, {'seated', 'standing', 'walking'})),
 }
 
 
@@ -291,8 +295,10 @@ CONFIG_KEYS = frozenset({'model', 'provider', 'prompt_template_sha256', 'max_fra
 MOMENT_KEYS = frozenset({'moment_id', 'anchors', 'start_time', 'end_time', 'detected_time',
                          'activity', 'roles', 'frame_times', 'status', 'failure',
                          'observation', 'second_opinion'})
-ANCHOR_KINDS = {'posture': ('sit_to_stand', 'stand_to_sit'), 'movement': ('large_movement',),
-                'orientation': ('turned_away_from_task', 'turned_back_to_task')}
+ANCHOR_KINDS = {'posture': ('sit_to_stand', 'stand_to_sit', 'to_lying', 'from_lying'),
+                'movement': ('large_movement',),
+                'orientation': ('turned_away_from_task', 'turned_back_to_task',
+                                'left_work_area', 'returned_to_work_area')}
 MAX_ANCHORS = 8
 MAX_MOMENTS = 200
 _NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9._/:-]{0,127}')

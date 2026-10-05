@@ -193,7 +193,13 @@ function ChannelRow({ channel, review, videoTime }: { channel: ChannelName; revi
   const count = review.entries.filter((entry) => entry.channel === channel).length;
   const flagged = review.entries.some((entry) => entry.channel === channel && entry.level === "flag");
   const band = summary?.bands?.find(([start, end]) => start <= videoTime && videoTime < end);
+  const gap = summary?.gaps?.find(([start, end]) => start <= videoTime && videoTime < end);
   const reason = review.skipped[channel];
+  // The two biggest reasons for unmeasured time, so a gap is never unexplained.
+  const topReasons = Object.entries(summary?.reasons ?? {})
+    .filter(([, share]) => share >= 0.01)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 2);
   const checks = review.entries.filter((entry) => entry.channel === channel && entry.details.second_opinion === "disagrees").length;
   return (
     <li
@@ -224,11 +230,30 @@ function ChannelRow({ channel, review, videoTime }: { channel: ChannelName; revi
           </span>
         ) : (
           <div className="grid gap-0.5">
-            <span>{s.review.measured(Math.round((summary?.coverage ?? 0) * 100))}</span>
+            <span>
+              {s.review.measured(Math.round((summary?.coverage ?? 0) * 100))}
+              {(summary?.held ?? 0) >= 0.005 && <> · {s.review.inferred(Math.round(summary!.held! * 100))}</>}
+            </span>
+            {summary?.head_coverage !== undefined && (
+              <span className="text-faint">{s.review.headMeasured(Math.round(summary.head_coverage * 100))}</span>
+            )}
+            {topReasons.length > 0 && (
+              <span className="text-faint">
+                {s.review.notMeasured}:{" "}
+                {topReasons.map(([why, share]) => `${s.review.gapReasons[why] ?? why} ${Math.round(share * 100)}%`).join(s.dir === "rtl" ? "، " : ", ")}
+              </span>
+            )}
             {count === 0 && <span className="font-medium text-ink">{s.review.noEventObserved}</span>}
             {summary?.bands && (
               <span>
-                {s.review.now}: {band ? <span className="font-medium text-ink">{s.review.states[band[2]] ?? band[2]}</span> : s.review.notMeasuredNow}
+                {s.review.now}:{" "}
+                {band ? (
+                  <span className="font-medium text-ink">{s.review.states[band[2]] ?? band[2]}</span>
+                ) : gap ? (
+                  `${s.review.notMeasured} · ${s.review.gapReasons[gap[2]] ?? gap[2]}`
+                ) : (
+                  s.review.notMeasuredNow
+                )}
               </span>
             )}
           </div>

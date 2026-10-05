@@ -154,6 +154,15 @@ body {
   );
 }
 
+/* Inferred (carried-over) readings: the measured colour, lighter and striped. */
+.inferred {
+  background-image: repeating-linear-gradient(
+    135deg,
+    color-mix(in oklab, var(--surface) 55%, transparent) 0 2px,
+    transparent 2px 6px
+  );
+}
+
 .stage-grid {
   background-color: var(--stage);
   background-image:

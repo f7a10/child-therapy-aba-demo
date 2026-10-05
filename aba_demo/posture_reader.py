@@ -18,8 +18,10 @@ from .colab_workflow import _write_bytes
 from .movement_frames import SequentialFrameReader
 from .movement_windows import decoded_seconds
 from .posture_features import (
-    KEYPOINT_CONFIDENCE, MAX_GAP_SECONDS, MIN_STABLE_SAMPLES, SITTING_MAX_RATIO,
-    STANDING_MIN_RATIO, classify_posture, leg_ratio, posture_events)
+    EVENT_KINDS_V2, HOLD_MAX_HIP_SHIFT, HOLD_MAX_IDENTITY_GAP, KEYPOINT_CONFIDENCE, LYING_MIN_DEGREES,
+    LYING_MIN_THIGH_DEGREES, MAX_GAP_SECONDS,
+    MIN_STABLE_SAMPLES, SITTING_MAX_RATIO, STANDING_MIN_RATIO, body_measures, classify_posture_v2,
+    gap_reason, held_postures, leg_ratio, posture_events)
 from .posture_schema import encode_posture_document
 
 
@@ -81,41 +83,63 @@ class PostureJob:
                  keypoint_confidence=KEYPOINT_CONFIDENCE, standing_min_ratio=STANDING_MIN_RATIO,
                  sitting_max_ratio=SITTING_MAX_RATIO, min_stable_samples=MIN_STABLE_SAMPLES,
                  max_gap_seconds=MAX_GAP_SECONDS, match_iou_min=MATCH_IOU_MIN,
-                 standing_needs_both_knees=True):
+                 standing_needs_both_knees=True, lying_min_degrees=LYING_MIN_DEGREES,
+                 lying_min_thigh_degrees=LYING_MIN_THIGH_DEGREES,
+                 hold_max_hip_shift=HOLD_MAX_HIP_SHIFT, hold_max_identity_gap=HOLD_MAX_IDENTITY_GAP):
         self.data, self.tracking_sha, self.output_dir = data, tracking_sha, Path(output_dir)
         self.config = {'weights': weights_name, 'keypoint_confidence': keypoint_confidence,
                        'standing_min_ratio': standing_min_ratio,
                        'sitting_max_ratio': sitting_max_ratio,
                        'min_stable_samples': min_stable_samples,
                        'max_gap_seconds': max_gap_seconds, 'match_iou_min': match_iou_min,
-                       'standing_needs_both_knees': standing_needs_both_knees}
+                       'standing_needs_both_knees': standing_needs_both_knees,
+                       'lying_min_degrees': lying_min_degrees,
+                       'lying_min_thigh_degrees': lying_min_thigh_degrees,
+                       'hold_max_hip_shift': hold_max_hip_shift,
+                       'hold_max_identity_gap': hold_max_identity_gap}
         self.samples = []
 
     def step(self, number, row, index, frame, context):
         config = self.config
         if row['identity'] != 'confirmed':
             self.samples.append({'time': row['time'], 'frame_index': index,
-                                 'identity': 'uncertain', 'state': None, 'leg_ratio': None})
+                                 'identity': 'uncertain', 'state': None, 'leg_ratio': None,
+                                 'torso_angle': None, 'thigh_angle': None, 'hip_y': None,
+                                 'torso': None,
+                                 'reason': None, 'held': None})
             return
         target = [box['xyxy'] for box in row['boxes'] if box.get('id') == row['target_id']][0]
         points = _child_keypoints(frame.detections(), target, config['match_iou_min'])
+        width, height = frame.image.size
         ratio = leg_ratio(points, keypoint_confidence=config['keypoint_confidence'],
                           standing_needs_both_knees=config['standing_needs_both_knees'],
                           standing_min=config['standing_min_ratio'])
+        angle, thigh, hip, torso = body_measures(points, aspect=width / height,
+                                                 keypoint_confidence=config['keypoint_confidence'])
+        state = classify_posture_v2(ratio, angle, thigh, standing_min=config['standing_min_ratio'],
+                                    sitting_max=config['sitting_max_ratio'],
+                                    lying_min=config['lying_min_degrees'],
+                                    lying_min_thigh=config['lying_min_thigh_degrees'])
+        reason = (gap_reason(points, keypoint_confidence=config['keypoint_confidence'])
+                  if state == 'not_measurable' else None)
         self.samples.append({'time': row['time'], 'frame_index': index, 'identity': 'confirmed',
-                             'state': classify_posture(ratio,
-                                                       standing_min=config['standing_min_ratio'],
-                                                       sitting_max=config['sitting_max_ratio']),
-                             'leg_ratio': ratio})
+                             'state': state, 'leg_ratio': ratio, 'torso_angle': angle,
+                             'thigh_angle': thigh,
+                             'hip_y': hip, 'torso': torso, 'reason': reason, 'held': None})
 
     def finish(self):
         data, samples, config = self.data, self.samples, self.config
         source = data['source']
+        for sample, held in zip(samples, held_postures(
+                samples, min_stable_samples=config['min_stable_samples'],
+                max_hip_shift=config['hold_max_hip_shift'],
+                max_identity_gap=config['hold_max_identity_gap'])):
+            sample['held'] = held
         events = [{'event_id': f'pos-{number:06d}', **event, 'clinician_confirmation': 'pending'}
                   for number, event in enumerate(posture_events(
                       samples, min_stable_samples=config['min_stable_samples'],
-                      max_gap_seconds=config['max_gap_seconds']))]
-        document = {'schema_version': 1, 'kind': 'posture_reading',
+                      max_gap_seconds=config['max_gap_seconds'], kinds=EVENT_KINDS_V2))]
+        document = {'schema_version': 2, 'kind': 'posture_reading',
                     'source_sha256': source['sha256'],
                     'tracking_candidate_sha256': self.tracking_sha, 'config': config,
                     'decoded_seconds': decoded_seconds(data), 'samples': samples,
@@ -126,6 +150,8 @@ class PostureJob:
             'tracking_candidate_sha256': self.tracking_sha, 'source_sha256': source['sha256'],
             'state_counts': dict(sorted(Counter(sample['state'] or 'identity_uncertain'
                                                 for sample in samples).items())),
+            'held_counts': dict(sorted(Counter(sample['held'] for sample in samples
+                                               if sample['held']).items())),
             'event_counts': dict(sorted(Counter(event['kind'] for event in events).items())),
         }
         write_job_output(self.output_dir, self.PENDING, encoded, self.REPORT, report)

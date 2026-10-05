@@ -64,9 +64,10 @@ def _validate_context(document, source_duration):
 
 # channel -> (allowed kinds, origin, validate(document, duration), to_events(document))
 CHANNELS = {
-    'posture': (('sit_to_stand', 'stand_to_sit'), 'measured',
+    'posture': (('sit_to_stand', 'stand_to_sit', 'to_lying', 'from_lying'), 'measured',
                 validate_posture_document, _measured_events('posture')),
-    'orientation': (('turned_away_from_task', 'turned_back_to_task'), 'measured',
+    'orientation': (('turned_away_from_task', 'turned_back_to_task',
+                     'left_work_area', 'returned_to_work_area'), 'measured',
                     validate_orientation_document, _measured_events('orientation')),
     'movement': (('large_movement',), 'measured',
                  validate_large_movement_document, _measured_events('movement')),

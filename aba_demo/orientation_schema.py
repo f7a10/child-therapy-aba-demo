@@ -9,13 +9,17 @@ leg ratio and the camera translation since the previous sample: only a stably
 seated child (causal posture rule over the sequence) under a still camera has an
 orientation, and validation recomputes both gates. The label is the observable
 sign "head turned away from the task region", never attention or gaze.
+Version 2 adds the work area: per sample the share of the child box inside the
+region and its state, recomputed by validation like the head state; its events
+(left / returned to the work area) are part of the same event list.
 """
 
 import json
 import math
 
 from .orientation_features import (
-    EVENT_KINDS, ORIENTATION_STATES, orientation_events, orientation_states, valid_task_region)
+    AREA_EVENT_KINDS, AREA_STATES, EVENT_KINDS, ORIENTATION_STATES, area_states,
+    orientation_events, orientation_events_v2, orientation_states, valid_task_region)
 
 
 CONFIG_KEYS = frozenset({'weights', 'keypoint_confidence', 'task_region', 'toward_max_degrees',
@@ -28,6 +32,8 @@ DOCUMENT_KEYS = frozenset({'schema_version', 'kind', 'source_sha256',
                            'samples', 'events'})
 SAMPLE_KEYS = frozenset({'time', 'frame_index', 'identity', 'state', 'facing_angle',
                          'facing_length', 'leg_ratio', 'camera_shift'})
+SAMPLE_KEYS_V2 = SAMPLE_KEYS | {'area_overlap', 'area_state'}
+CONFIG_KEYS_V2 = CONFIG_KEYS | {'area_at_min', 'area_away_max'}
 EVENT_KEYS = frozenset({'event_id', 'kind', 'start_time', 'end_time', 'evidence_times',
                         'detected_time', 'clinician_confirmation'})
 CLINICIAN_CONFIRMATIONS = ('pending', 'confirmed', 'rejected')
@@ -43,7 +49,13 @@ def _sha(value):
     return isinstance(value, str) and len(value) == 64 and set(value) <= _SHA_CHARACTERS
 
 
-def _valid_config(config):
+def _valid_config(config, version=1):
+    if version == 2:
+        if (not isinstance(config, dict) or set(config) != CONFIG_KEYS_V2
+                or not _finite(config['area_at_min']) or not _finite(config['area_away_max'])
+                or not 0 <= config['area_away_max'] < config['area_at_min'] <= 1):
+            return False
+        config = {key: config[key] for key in CONFIG_KEYS}
     return (isinstance(config, dict) and set(config) == CONFIG_KEYS
             and isinstance(config['weights'], str) and 1 <= len(config['weights']) <= 128
             and _finite(config['keypoint_confidence']) and 0 < config['keypoint_confidence'] < 1
@@ -62,6 +74,19 @@ def _valid_config(config):
             and 2 <= config['posture_min_stable_samples'] <= 20
             and _finite(config['posture_max_gap_seconds'])
             and 0 < config['posture_max_gap_seconds'] <= 60)
+
+
+def _valid_sample_v2(sample, decoded):
+    if not isinstance(sample, dict) or set(sample) != SAMPLE_KEYS_V2:
+        return False
+    overlap = sample['area_overlap']
+    if sample['identity'] == 'uncertain':
+        if overlap is not None or sample['area_state'] is not None:
+            return False
+    elif (overlap is not None and not (_finite(overlap) and 0 <= overlap <= 1)
+          or sample['area_state'] not in AREA_STATES):
+        return False
+    return _valid_sample({key: sample[key] for key in SAMPLE_KEYS}, decoded)
 
 
 def _valid_sample(sample, decoded):
@@ -91,10 +116,11 @@ def validate_orientation_document(document, source_duration):
     """Validate one orientation reading; raise ValueError('invalid_orientation_document')."""
     try:
         if (not isinstance(document, dict) or set(document) != DOCUMENT_KEYS
-                or document['schema_version'] != 1 or document['kind'] != 'orientation_reading'
+                or document['schema_version'] not in (1, 2)
+                or document['kind'] != 'orientation_reading'
                 or not _sha(document['source_sha256'])
                 or not _sha(document['tracking_candidate_sha256'])
-                or not _valid_config(document['config'])
+                or not _valid_config(document['config'], document['schema_version'])
                 or not _finite(source_duration) or source_duration <= 0
                 or not _finite(document['decoded_seconds'])
                 or not 0 < document['decoded_seconds'] <= source_duration
@@ -103,7 +129,11 @@ def validate_orientation_document(document, source_duration):
                 or not isinstance(document['events'], list)):
             raise ValueError
         config, samples = document['config'], document['samples']
-        if not all(_valid_sample(sample, document['decoded_seconds']) for sample in samples):
+        version = document['schema_version']
+        check = _valid_sample_v2 if version == 2 else _valid_sample
+        if not all(check(sample, document['decoded_seconds']) for sample in samples):
+            raise ValueError
+        if version == 2 and [sample['area_state'] for sample in samples] != area_states(samples, config):
             raise ValueError
         if any(current['time'] <= previous['time']
                or current['frame_index'] <= previous['frame_index']
@@ -111,15 +141,17 @@ def validate_orientation_document(document, source_duration):
             raise ValueError
         if [sample['state'] for sample in samples] != orientation_states(samples, config):
             raise ValueError
-        expected = orientation_events(samples, min_stable_samples=config['min_stable_samples'],
-                                      max_gap_seconds=config['max_gap_seconds'])
+        derive = orientation_events_v2 if version == 2 else orientation_events
+        kinds = {**EVENT_KINDS, **AREA_EVENT_KINDS} if version == 2 else EVENT_KINDS
+        expected = derive(samples, min_stable_samples=config['min_stable_samples'],
+                          max_gap_seconds=config['max_gap_seconds'])
         events = document['events']
         identifiers = set()
         for event, derived in zip(events, expected):
             if (not isinstance(event, dict) or set(event) != EVENT_KEYS
                     or not isinstance(event['event_id'], str)
                     or not 1 <= len(event['event_id']) <= 64 or event['event_id'] in identifiers
-                    or event['kind'] not in EVENT_KINDS.values()
+                    or event['kind'] not in kinds.values()
                     or event['clinician_confirmation'] not in CLINICIAN_CONFIRMATIONS
                     or {key: event[key] for key in derived} != derived):
                 raise ValueError

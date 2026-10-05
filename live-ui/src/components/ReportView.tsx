@@ -145,7 +145,18 @@ export function ReportView({ sessionId, onBack }: { sessionId: string; onBack: (
                         ? `${s.report.notAnalysed}${reason ? ` · ${s.review.reasons[reason] ?? reason}` : ""}`
                         : channel === "context"
                           ? s.review.contextRead(summary?.read ?? 0, summary?.moments ?? 0)
-                          : `${Math.round((summary?.coverage ?? 0) * 100)}%`}
+                          : `${Math.round((summary?.coverage ?? 0) * 100)}%`
+                            + ((summary?.held ?? 0) >= 0.005 ? ` · ${s.review.inferred(Math.round(summary!.held! * 100))}` : "")}
+                      {Object.keys(summary?.reasons ?? {}).length > 0 && (
+                        <span className="block text-xs text-faint">
+                          {s.review.notMeasured}:{" "}
+                          {Object.entries(summary!.reasons!)
+                            .filter(([, share]) => share >= 0.01)
+                            .sort((a, b) => b[1] - a[1])
+                            .map(([why, share]) => `${s.review.gapReasons[why] ?? why} ${Math.round(share * 100)}%`)
+                            .join(s.dir === "rtl" ? "، " : ", ")}
+                        </span>
+                      )}
                     </td>
                     <td className="py-2 tabular">{loaded ? count : "—"}</td>
                   </tr>

@@ -18,9 +18,10 @@ from .channel_pass import check_output_dir, load_bound_candidate, run_pass
 from .movement_frames import SequentialFrameReader
 from .movement_windows import decoded_seconds
 from .orientation_features import (
-    AWAY_MIN_DEGREES, KEYPOINT_CONFIDENCE, MAX_CAMERA_SHIFT, MAX_GAP_SECONDS, MIN_FACING_LENGTH,
-    MIN_STABLE_SAMPLES, POSTURE_MAX_GAP_SECONDS, POSTURE_MIN_STABLE_SAMPLES, TOWARD_MAX_DEGREES,
-    camera_shift, facing_measure, orientation_events, orientation_states, valid_task_region)
+    AREA_AT_MIN, AREA_AWAY_MAX, AWAY_MIN_DEGREES, KEYPOINT_CONFIDENCE, MAX_CAMERA_SHIFT,
+    MAX_GAP_SECONDS, MIN_FACING_LENGTH, MIN_STABLE_SAMPLES, POSTURE_MAX_GAP_SECONDS,
+    POSTURE_MIN_STABLE_SAMPLES, TOWARD_MAX_DEGREES, area_overlap, area_states, camera_shift,
+    facing_measure, orientation_events_v2, orientation_states, valid_task_region)
 from .orientation_schema import encode_orientation_document
 from .posture_features import SITTING_MAX_RATIO, STANDING_MIN_RATIO, leg_ratio
 from .posture_reader import (MATCH_IOU_MIN, YoloPoseDetector, _child_keypoints,  # noqa: F401
@@ -48,7 +49,8 @@ class OrientationJob:
                  standing_min_ratio=STANDING_MIN_RATIO, sitting_max_ratio=SITTING_MAX_RATIO,
                  max_camera_shift=MAX_CAMERA_SHIFT,
                  posture_min_stable_samples=POSTURE_MIN_STABLE_SAMPLES,
-                 posture_max_gap_seconds=POSTURE_MAX_GAP_SECONDS):
+                 posture_max_gap_seconds=POSTURE_MAX_GAP_SECONDS, area_at_min=AREA_AT_MIN,
+                 area_away_max=AREA_AWAY_MAX):
         if not valid_task_region(task_region):
             raise ValueError('invalid_task_region')
         task_region = [float(value) for value in task_region]
@@ -65,7 +67,8 @@ class OrientationJob:
                        'sitting_max_ratio': sitting_max_ratio,
                        'max_camera_shift': max_camera_shift,
                        'posture_min_stable_samples': posture_min_stable_samples,
-                       'posture_max_gap_seconds': posture_max_gap_seconds}
+                       'posture_max_gap_seconds': posture_max_gap_seconds,
+                       'area_at_min': area_at_min, 'area_away_max': area_away_max}
         self.samples, self.previous = [], None
 
     def step(self, number, row, index, frame, context):
@@ -80,7 +83,8 @@ class OrientationJob:
             self.samples.append({'time': row['time'], 'frame_index': index,
                                  'identity': 'uncertain', 'state': None,
                                  'facing_angle': None, 'facing_length': None,
-                                 'leg_ratio': None, 'camera_shift': None})
+                                 'leg_ratio': None, 'camera_shift': None,
+                                 'area_overlap': None, 'area_state': None})
             return
         target = [box['xyxy'] for box in row['boxes'] if box.get('id') == row['target_id']][0]
         points = _child_keypoints(frame.detections(), target, config['match_iou_min'])
@@ -90,19 +94,22 @@ class OrientationJob:
         ratio = leg_ratio(points, keypoint_confidence=config['keypoint_confidence'])
         self.samples.append({'time': row['time'], 'frame_index': index, 'identity': 'confirmed',
                              'state': None, 'facing_angle': angle, 'facing_length': length,
-                             'leg_ratio': ratio, 'camera_shift': shift})
+                             'leg_ratio': ratio, 'camera_shift': shift,
+                             'area_overlap': area_overlap(target, config['task_region']),
+                             'area_state': None})
 
     def finish(self):
         data, samples, config = self.data, self.samples, self.config
         source = data['source']
         self.previous = None
-        for sample, state in zip(samples, orientation_states(samples, config)):
-            sample['state'] = state
+        for sample, state, area in zip(samples, orientation_states(samples, config),
+                                       area_states(samples, config)):
+            sample['state'], sample['area_state'] = state, area
         events = [{'event_id': f'ori-{number:06d}', **event, 'clinician_confirmation': 'pending'}
-                  for number, event in enumerate(orientation_events(
+                  for number, event in enumerate(orientation_events_v2(
                       samples, min_stable_samples=config['min_stable_samples'],
                       max_gap_seconds=config['max_gap_seconds']))]
-        document = {'schema_version': 1, 'kind': 'orientation_reading',
+        document = {'schema_version': 2, 'kind': 'orientation_reading',
                     'source_sha256': source['sha256'],
                     'tracking_candidate_sha256': self.tracking_sha, 'config': config,
                     'decoded_seconds': decoded_seconds(data), 'samples': samples,
@@ -113,6 +120,8 @@ class OrientationJob:
             'tracking_candidate_sha256': self.tracking_sha, 'source_sha256': source['sha256'],
             'state_counts': dict(sorted(Counter(sample['state'] or 'identity_uncertain'
                                                 for sample in samples).items())),
+            'area_counts': dict(sorted(Counter(sample['area_state'] or 'identity_uncertain'
+                                               for sample in samples).items())),
             'event_counts': dict(sorted(Counter(event['kind'] for event in events).items())),
         }
         write_job_output(self.output_dir, self.PENDING, encoded, self.REPORT, report)

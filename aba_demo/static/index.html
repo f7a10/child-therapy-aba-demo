@@ -214,6 +214,8 @@ const CHANNEL_LABELS = Object.freeze({
   channels:Object.freeze({posture:'الوضعية',movement:'الحركة الكبيرة',orientation:'الاتجاه',context:'السياق'}),
   kinds:Object.freeze({sit_to_stand:'قام من الجلوس',stand_to_sit:'جلس',large_movement:'حركة كبيرة',
     turned_away_from_task:'التفت بعيداً عن المهمة',turned_back_to_task:'عاد باتجاه المهمة',
+    to_lying:'انبطح',from_lying:'قام من الانبطاح',left_work_area:'ترك منطقة العمل',
+    returned_to_work_area:'عاد إلى منطقة العمل',
     context_note:'ملاحظة سياق'}),
   origins:Object.freeze({measured:'قياس محلي',suggested:'مقترح من نموذج'}),
   details:Object.freeze({
@@ -223,7 +225,8 @@ const CHANNEL_LABELS = Object.freeze({
   levels:Object.freeze({flag:'علامة للمراجعة',info:'معلومة'})
 });
 // Mirrors aba_demo.session_timeline.FLAG_RULES (provisional-1); a test keeps them equal.
-const CHANNEL_FLAG_RULES = Object.freeze(['table|posture|sit_to_stand']);
+const CHANNEL_FLAG_RULES = Object.freeze(['table|posture|sit_to_stand','table|posture|to_lying',
+  'movement|posture|to_lying','table|orientation|left_work_area']);
 function channelEventLevel(activity, channel, kind) {
   return CHANNEL_FLAG_RULES.includes(activity+'|'+channel+'|'+kind) ? 'flag' : 'info';
 }

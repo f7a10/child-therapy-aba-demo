@@ -215,3 +215,47 @@ def large_movement_events(samples, *, displacement_threshold=DISPLACEMENT_THRESH
     if episode is not None:
         close(samples[-1]['time'])
     return events
+
+
+MOTION_WINDOW_SECONDS = 1.0
+MOVING_MIN_TORSO = 0.5
+
+
+def motion_states(samples, *, window_seconds=MOTION_WINDOW_SECONDS, moving_min=MOVING_MIN_TORSO,
+                  max_gap_seconds=MAX_GAP_SECONDS):
+    """Per sample ``moving`` / ``still`` for the review lane, or None when unknown.
+
+    The camera-compensated body centre (both directions) is compared with where it
+    was about ``window_seconds`` earlier in the same segment; a shift of at least
+    ``moving_min`` torso lengths is ``moving``. Display data only: events stay the
+    stricter horizontal large movements above.
+    """
+    if (not _finite(window_seconds) or not 0 < window_seconds <= 10
+            or not _finite(moving_min) or not 0 < moving_min <= 10):
+        raise ValueError('invalid_large_movement_parameters')
+    states = sample_states(samples, max_gap_seconds=max_gap_seconds)
+    result, segment, previous_centre = [], [], None
+    for sample, state in zip(samples, states):
+        if state is None or state == 'segment_start':
+            segment, previous_centre = [], None
+        if state is None or state == 'not_measurable':
+            result.append(None)
+            continue
+        if state == 'segment_start':
+            segment = [(sample['time'], sample['centre'][0], sample['centre'][1], sample['torso'])]
+        else:
+            moved_x, moved_y = _apply(sample['camera'], previous_centre)
+            _, last_x, last_y, _ = segment[-1]
+            segment.append((sample['time'], last_x + sample['centre'][0] - moved_x,
+                            last_y + sample['centre'][1] - moved_y, sample['torso']))
+        previous_centre = sample['centre']
+        time, x, y, torso = segment[-1]
+        earlier = [point for point in segment if time - point[0] <= window_seconds + _EPSILON]
+        start = earlier[0]
+        if time - start[0] < window_seconds / 2 - _EPSILON:
+            result.append(None)
+            continue
+        shift = math.hypot(x - start[1], y - start[2])
+        result.append('moving' if shift >= moving_min * max(torso, start[3]) else 'still')
+    return result
+

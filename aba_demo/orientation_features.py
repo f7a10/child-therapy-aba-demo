@@ -16,6 +16,13 @@ previous 5 Hz sample must be reliably estimated and at most ``MAX_CAMERA_SHIFT``
 frame heights, because the fixed region is only meaningful under a still
 camera. Zoom (scale change) is not gated. Thresholds are provisional, set on
 two development recordings.
+
+Version 2 readings add the work area: the share of the tracked child box that
+lies inside the drawn region. At least ``AREA_AT_MIN`` is ``at_area``, at most
+``AREA_AWAY_MAX`` is ``away_from_area``, in between ``unclear``. It needs no
+keypoints (only the tracked box), so it is measurable whenever the child is
+identified and the camera is still (same camera gate as the head). It says where
+the body is, never what the child is doing there.
 """
 
 import math
@@ -38,6 +45,11 @@ MAX_GAP_SECONDS = 3.0
 ORIENTATION_STATES = ('toward', 'away', 'unclear', 'not_measurable')
 EVENT_KINDS = {('toward', 'away'): 'turned_away_from_task',
                ('away', 'toward'): 'turned_back_to_task'}
+AREA_AT_MIN = 0.25
+AREA_AWAY_MAX = 0.10
+AREA_STATES = ('at_area', 'away_from_area', 'unclear', 'not_measurable')
+AREA_EVENT_KINDS = {('at_area', 'away_from_area'): 'left_work_area',
+                    ('away_from_area', 'at_area'): 'returned_to_work_area'}
 
 
 def _finite(value):
@@ -184,8 +196,52 @@ def orientation_states(samples, config):
         for sample, flag in zip(samples, seated)]
 
 
+def area_overlap(box, task_region):
+    """Share of the child box ``[x1, y1, x2, y2]`` inside the task region, or None."""
+    if (not isinstance(box, (list, tuple)) or len(box) != 4 or not all(_finite(v) for v in box)
+            or box[2] <= box[0] or box[3] <= box[1] or not valid_task_region(task_region)):
+        return None
+    width = max(0.0, min(box[2], task_region[2]) - max(box[0], task_region[0]))
+    height = max(0.0, min(box[3], task_region[3]) - max(box[1], task_region[1]))
+    return width * height / ((box[2] - box[0]) * (box[3] - box[1]))
+
+
+def area_state(overlap, shift, *, at_min=AREA_AT_MIN, away_max=AREA_AWAY_MAX,
+               max_camera_shift=MAX_CAMERA_SHIFT):
+    """Work-area state under a still camera; ``not_measurable`` otherwise."""
+    if (not all(_finite(value) for value in (at_min, away_max, max_camera_shift))
+            or not 0 <= away_max < at_min <= 1 or max_camera_shift <= 0):
+        raise ValueError('invalid_orientation_thresholds')
+    if overlap is None or not _finite(shift) or not 0 <= shift <= max_camera_shift:
+        return 'not_measurable'
+    if overlap >= at_min:
+        return 'at_area'
+    if overlap <= away_max:
+        return 'away_from_area'
+    return 'unclear'
+
+
+def area_states(samples, config):
+    """Recompute every sample's work-area state (None for uncertain identity)."""
+    return [None if sample['identity'] != 'confirmed' else area_state(
+        sample['area_overlap'], sample['camera_shift'], at_min=config['area_at_min'],
+        away_max=config['area_away_max'], max_camera_shift=config['max_camera_shift'])
+        for sample in samples]
+
+
+def orientation_events_v2(samples, *, min_stable_samples=MIN_STABLE_SAMPLES,
+                          max_gap_seconds=MAX_GAP_SECONDS):
+    """Head turns and work-area changes, in time order (each under the same stable rule)."""
+    events = (orientation_events(samples, min_stable_samples=min_stable_samples,
+                                 max_gap_seconds=max_gap_seconds)
+              + orientation_events(samples, min_stable_samples=min_stable_samples,
+                                   max_gap_seconds=max_gap_seconds, key='area_state',
+                                   kinds=AREA_EVENT_KINDS))
+    return sorted(events, key=lambda event: (event['start_time'], event['end_time'], event['kind']))
+
+
 def orientation_events(samples, *, min_stable_samples=MIN_STABLE_SAMPLES,
-                       max_gap_seconds=MAX_GAP_SECONDS):
+                       max_gap_seconds=MAX_GAP_SECONDS, key='state', kinds=EVENT_KINDS):
     """Turns between stable toward / away states inside continuous confirmed identity.
 
     Same rule as posture: a state is stable after ``min_stable_samples``
@@ -193,8 +249,9 @@ def orientation_events(samples, *, min_stable_samples=MIN_STABLE_SAMPLES,
     nor break the count. An identity gap or more than ``max_gap_seconds``
     without a measured state forgets the stable state. Each event cites the last
     old-state sample and the first new-state sample; ``detected_time`` is the
-    confirming sample.
+    confirming sample. ``key`` and ``kinds`` pick the state series (head by default).
     """
+    measured = {state for pair in kinds for state in pair}
     if (type(min_stable_samples) is not int or not 2 <= min_stable_samples <= 20
             or not _finite(max_gap_seconds) or not 0 < max_gap_seconds <= 60):
         raise ValueError('invalid_orientation_parameters')
@@ -207,8 +264,8 @@ def orientation_events(samples, *, min_stable_samples=MIN_STABLE_SAMPLES,
         if sample['identity'] != 'confirmed':
             stable = candidate = last_measured_time = None
             continue
-        state = sample['state']
-        if state not in ('toward', 'away'):
+        state = sample[key]
+        if state not in measured:
             continue
         time = sample['time']
         if last_measured_time is not None and time - last_measured_time > max_gap_seconds:
@@ -223,7 +280,7 @@ def orientation_events(samples, *, min_stable_samples=MIN_STABLE_SAMPLES,
         candidate_count += 1
         if candidate_count >= min_stable_samples:
             if stable is not None:
-                events.append({'kind': EVENT_KINDS[(stable, candidate)],
+                events.append({'kind': kinds[(stable, candidate)],
                                'start_time': stable_last_time, 'end_time': candidate_first_time,
                                'evidence_times': [stable_last_time, candidate_first_time],
                                'detected_time': time})

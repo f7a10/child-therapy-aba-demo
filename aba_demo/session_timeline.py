@@ -17,9 +17,10 @@ from .channel_events import CHANNELS, channel_reading
 from .grouping import group_by_time
 
 
-RULES_VERSION = 'provisional-1'
+RULES_VERSION = 'provisional-2'
 # (activity, channel, kind) -> level; anything not listed is 'info'.
-FLAG_RULES = frozenset({('table', 'posture', 'sit_to_stand')})
+FLAG_RULES = frozenset({('table', 'posture', 'sit_to_stand'), ('table', 'posture', 'to_lying'),
+                        ('movement', 'posture', 'to_lying'), ('table', 'orientation', 'left_work_area')})
 _SHA_CHARACTERS = frozenset('0123456789abcdef')
 
 

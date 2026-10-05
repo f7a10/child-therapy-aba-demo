@@ -4,12 +4,20 @@ import { useI18n } from "../lib/i18n";
 import { CHANNELS, type ChannelName, type ReviewPayload } from "../lib/types";
 import { cx } from "./ui";
 
-const BAND_CLASS: Record<string, string> = {
+export const BAND_CLASS: Record<string, string> = {
   sitting: "bg-accent/35",
   standing: "bg-attention/55",
+  lying: "bg-[#7d6bd1]/55",
+  held_sitting: "bg-accent/30 inferred",
+  held_standing: "bg-attention/40 inferred",
   toward: "bg-positive/35",
   away: "bg-attention/55",
+  at_area: "bg-positive/35",
+  away_from_area: "bg-attention/55",
+  moving: "bg-[#5b86d6]/50",
+  still: "bg-muted/15",
 };
+const LEGEND_ORDER = ["sitting", "standing", "lying", "at_area", "away_from_area", "moving", "still", "toward", "away"];
 
 /**
  * One lane per channel across the whole session: measured-state bands, a mark per
@@ -29,9 +37,11 @@ export function ReviewTimeline({ review, videoTime, onSeek }: {
     onSeek(Math.max(0, Math.min(span, ((event.clientX - rect.left) / rect.width) * span)));
   };
   const ticks = [0, 0.25, 0.5, 0.75, 1];
-  const legend = (["sitting", "standing", "toward", "away"] as const).filter((state) =>
-    CHANNELS.some((channel) => review.summary[channel]?.bands?.some((band) => band[2] === state)),
-  );
+  const shown = (state: string) =>
+    CHANNELS.some((channel) => review.summary[channel]?.bands?.some((band) => band[2] === state));
+  const legend = LEGEND_ORDER.filter(shown);
+  const inferred = shown("held_sitting") || shown("held_standing");
+  const gaps = CHANNELS.some((channel) => (review.summary[channel]?.gaps ?? []).length > 0);
 
   return (
     <div>
@@ -67,6 +77,18 @@ export function ReviewTimeline({ review, videoTime, onSeek }: {
               {s.review.states[state]}
             </span>
           ))}
+          {inferred && (
+            <span className="inline-flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-4 rounded-sm bg-accent/30 inferred" />
+              {s.review.inferredLegend}
+            </span>
+          )}
+          {gaps && (
+            <span className="inline-flex items-center gap-1.5">
+              <span className="hatched inline-block h-2.5 w-4 rounded-sm ring-1 ring-line-strong" />
+              {s.review.gapLegend}
+            </span>
+          )}
           <span className="inline-flex items-center gap-1.5">
             <span className="inline-block h-3 w-1 rounded-sm bg-attention" />
             {s.level.flag}
@@ -91,6 +113,7 @@ function Lane({ channel, review, at, seek, videoTime }: {
   const { s } = useI18n();
   const loaded = review.channels.includes(channel);
   const bands = review.summary[channel]?.bands ?? [];
+  const gaps = review.summary[channel]?.gaps ?? [];
   const entries = review.entries.filter((entry) => entry.channel === channel);
   const reason = review.skipped[channel];
   return (
@@ -103,9 +126,18 @@ function Lane({ channel, review, at, seek, videoTime }: {
           onClick={seek}
           role="presentation"
         >
+          {gaps.map(([start, end, why]) => (
+            <span
+              key={`gap-${start}`}
+              title={`${formatClock(start)}–${formatClock(end)} · ${s.review.notMeasured}: ${s.review.gapReasons[why] ?? why}`}
+              className="hatched absolute top-0 bottom-0"
+              style={{ left: at(start), width: `calc(${at(end)} - ${at(start)})` }}
+            />
+          ))}
           {bands.map(([start, end, state]) => (
             <span
               key={`${start}-${state}`}
+              title={`${formatClock(start)}–${formatClock(end)} · ${s.review.states[state] ?? state}`}
               className={cx("absolute top-0 bottom-0", BAND_CLASS[state] ?? "bg-muted/30")}
               style={{ left: at(start), width: `calc(${at(end)} - ${at(start)})` }}
             />

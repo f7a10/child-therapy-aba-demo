@@ -217,6 +217,14 @@ export type Band = [number, number, string];
 
 export interface ChannelSummary {
   coverage?: number;
+  /** Posture: share of the session with a carried-over (inferred) posture. */
+  held?: number;
+  /** Work area channel: share with a measured head direction. */
+  head_coverage?: number;
+  /** Stretches with no reading and why, e.g. [start, end, "knees_hidden"]. */
+  gaps?: Band[];
+  /** Share of the session per gap reason. */
+  reasons?: Record<string, number>;
   bands?: Band[];
   moments?: number;
   read?: number;
