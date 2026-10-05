@@ -46,6 +46,12 @@ class MomentMark(BaseModel):
     note: str = Field(default="", max_length=500)
 
 
+class PointLabel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    posture: Literal["sitting", "standing", "lying", "not_visible"] | None = None
+    area: Literal["at_area", "away_from_area", "not_visible"] | None = None
+
+
 class SessionCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     command: Literal[COMMANDS]
@@ -173,6 +179,12 @@ def create_app(manager: SessionManager | None = None, port: int = DEFAULT_PORT,
             return {"sessions": [], "analysis": False}
         return {"sessions": await asyncio.to_thread(library.list), "analysis": analyses is not None}
 
+    @app.get("/api/library/accuracy")
+    async def library_accuracy():
+        if library is None:
+            return {"sessions": 0, "labeled_sessions": 0, "labels": {}, "verdicts": {}}
+        return await asyncio.to_thread(library.accuracy_overview)
+
     @app.get("/api/library/{session_id}")
     async def library_review(session_id: str):
         try:
@@ -207,6 +219,20 @@ def create_app(manager: SessionManager | None = None, port: int = DEFAULT_PORT,
         # A byte-order mark so spreadsheet programs read the file as UTF-8.
         return Response("\ufeff" + text, media_type="text/csv; charset=utf-8",
                         headers={"Content-Disposition": f'attachment; filename="{session_id}-{kind}.csv"'})
+
+    @app.get("/api/library/{session_id}/labels")
+    async def library_labels(session_id: str):
+        try:
+            return await asyncio.to_thread(_library().labels, session_id)
+        except KeyError:
+            raise SessionNotFound(session_id) from None
+
+    @app.put("/api/library/{session_id}/labels/{time}")
+    async def library_set_label(session_id: str, time: float, body: PointLabel):
+        try:
+            return await asyncio.to_thread(_library().set_label, session_id, time, body.posture, body.area)
+        except KeyError:
+            raise SessionNotFound(session_id) from None
 
     @app.put("/api/library/{session_id}/moments/{moment_id}")
     async def library_mark(session_id: str, moment_id: str, body: MomentMark):

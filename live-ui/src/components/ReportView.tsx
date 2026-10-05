@@ -10,6 +10,7 @@ import { CHANNELS, type ChannelEntry, type ReviewPayload } from "../lib/types";
 import { BrandMark } from "./TopBar";
 import { VERDICTS, VERDICT_ICON, VERDICT_TONE } from "./MomentReview";
 import { ContextLines } from "./SessionStrip";
+import { RecordingCheck } from "./GuideView";
 import { SessionSummary } from "./SessionSummary";
 import { Button, cx } from "./ui";
 
@@ -126,6 +127,9 @@ export function ReportView({ sessionId, onBack }: { sessionId: string; onBack: (
         {review.measures && (
           <Section title={s.measures.title}>
             <SessionSummary measures={review.measures} sessionId={review.id} printable />
+            <div className="mt-4">
+              <RecordingCheck hints={review.hints} />
+            </div>
           </Section>
         )}
 

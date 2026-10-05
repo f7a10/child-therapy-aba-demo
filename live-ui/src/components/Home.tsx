@@ -15,12 +15,14 @@ import {
 import { analysis, ApiError, api, library } from "../lib/api";
 import { formatLength } from "../lib/format";
 import { SCENARIO_TEXT, useI18n } from "../lib/i18n";
-import { CHANNELS, type AnalysisStatus, type LibrarySession, type Scenario } from "../lib/types";
+import { CHANNELS, type AccuracyOverview, type AnalysisStatus, type LibrarySession, type Scenario } from "../lib/types";
+import { Score } from "./LabelView";
 import { Button, Card, Pill, cx } from "./ui";
 
 const PRINCIPLE_ICONS = [UserCheck, CircleDashed, Hand];
 
 interface Props {
+  onGuide: () => void;
   onAnalysis: (jobId: string) => void;
   onReview: (sessionId: string) => void;
   onScenario: (scenarioId: string) => void;
@@ -28,7 +30,7 @@ interface Props {
 }
 
 /** Home: analyse a new video, or open an analysed session for review. */
-export function Home({ onAnalysis, onReview, onScenario, creatingScenario }: Props) {
+export function Home({ onGuide, onAnalysis, onReview, onScenario, creatingScenario }: Props) {
   const { s } = useI18n();
   const [sessions, setSessions] = useState<LibrarySession[] | null>(null);
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
@@ -84,7 +86,10 @@ export function Home({ onAnalysis, onReview, onScenario, creatingScenario }: Pro
       )}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-        <UploadCard current={current} onAnalysis={onAnalysis} />
+        <div className="grid content-start gap-6">
+          <UploadCard current={current} onAnalysis={onAnalysis} onGuide={onGuide} />
+          <AccuracyCard />
+        </div>
         <LibraryList sessions={sessions} onReview={onReview} />
       </div>
 
@@ -103,7 +108,11 @@ export function Home({ onAnalysis, onReview, onScenario, creatingScenario }: Pro
   );
 }
 
-function UploadCard({ current, onAnalysis }: { current: AnalysisStatus | null; onAnalysis: (id: string) => void }) {
+function UploadCard({ current, onAnalysis, onGuide }: {
+  current: AnalysisStatus | null;
+  onAnalysis: (id: string) => void;
+  onGuide: () => void;
+}) {
   const { s } = useI18n();
   const input = useRef<HTMLInputElement>(null);
   const [progress, setProgress] = useState<number | null>(null);
@@ -132,7 +141,10 @@ function UploadCard({ current, onAnalysis }: { current: AnalysisStatus | null; o
   return (
     <Card className="flex flex-col p-6" aria-labelledby="upload-title">
       <h2 id="upload-title" className="text-xl font-semibold tracking-tight">{s.home.newTitle}</h2>
-      <p className="mt-1 text-sm leading-relaxed text-muted">{s.home.newBody}</p>
+      <p className="mt-1 text-sm leading-relaxed text-muted">
+        {s.home.newBody}{" "}
+        <button onClick={onGuide} className="font-medium text-accent hover:underline">{s.guide.open}</button>
+      </p>
       {current ? (
         <Button variant="primary" size="lg" className="mt-6" onClick={() => onAnalysis(current.id)} icon={<ArrowRight className="size-4 rtl:rotate-180" aria-hidden />}>
           {s.home.resume} · {current.title}
@@ -262,6 +274,53 @@ function Thumbnail({ id }: { id: string }) {
         <img src={library.thumbnailUrl(id)} alt="" loading="lazy" onError={() => setFailed(true)} className="size-full object-cover" />
       )}
     </span>
+  );
+}
+
+/** How far the readings can be trusted so far: labels and verdicts over the whole library. */
+function AccuracyCard() {
+  const { s } = useI18n();
+  const [overview, setOverview] = useState<AccuracyOverview | null>(null);
+  useEffect(() => {
+    library.accuracy().then(setOverview, () => {});
+  }, []);
+  if (!overview || overview.sessions === 0) return null;
+  const verdicts = Object.entries(overview.verdicts)
+    .map(([kind, row]) => ({ kind, decided: row.confirmed + row.not_seen, ...row }))
+    .filter((row) => row.decided > 0);
+  const scores = (["posture", "area"] as const)
+    .map((channel) => [channel, overview.labels[channel]] as const)
+    .filter(([, score]) => score && score.labeled > 0);
+  return (
+    <Card className="p-6" aria-labelledby="accuracy-title">
+      <h2 id="accuracy-title" className="text-xl font-semibold tracking-tight">{s.accuracy.overviewTitle}</h2>
+      {scores.length === 0 && verdicts.length === 0 ? (
+        <p className="mt-1 text-sm text-muted">{s.accuracy.overviewEmpty}</p>
+      ) : (
+        <>
+          <p className="mt-1 text-sm text-muted">{s.accuracy.overviewBody(overview.labeled_sessions)}</p>
+          <div className="mt-4 grid gap-3">
+            {scores.map(([channel, score]) => <Score key={channel} name={s.accuracy.channel[channel]!} score={score!} />)}
+            {verdicts.length > 0 && (
+              <div className="rounded-xl border border-line p-3 text-sm">
+                <p className="font-semibold">{s.accuracy.verdictsTitle}</p>
+                <ul className="mt-1 grid gap-0.5 text-xs text-muted">
+                  {verdicts.map((row) => {
+                    const [channel, kind] = row.kind.split(":") as [string, string];
+                    return (
+                      <li key={row.kind}>
+                        <span className="text-ink">{s.kind[kind] ?? kind}</span>
+                        {" "}({s.channel[channel as keyof typeof s.channel] ?? channel}): {s.accuracy.verdictLine(row.confirmed, row.decided)}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </Card>
   );
 }
 

@@ -9,7 +9,9 @@ state bands (e.g. sitting / standing) so a session without events still shows
 what was observed. Nothing here analyses video.
 
 The therapist's own review of each moment (confirmed / not seen / unsure, and
-a short note) is kept next to the session in ``clinician_review.json``. It is
+a short note) is kept next to the session in ``clinician_review.json``; labels a
+reviewer adds to measure accuracy (the child's posture and work area every few
+seconds) in ``ground_truth_labels.json``, bound to the video only. It is
 bound to the video and channel bytes it was given for, never changes a channel
 document, and is dropped if the session it was written for no longer matches.
 """
@@ -22,6 +24,9 @@ from datetime import datetime
 from pathlib import Path
 
 from ..large_movement_features import motion_states
+from ..reading_accuracy import (
+    AREA_LABELS, LABEL_INTERVAL, POSTURE_LABELS, label_accuracy, label_points, merge_scores,
+    recording_hints, verdict_counts)
 from ..movement_windows import decoded_seconds
 from ..session_measures import episodes_csv, intervals_csv, session_measures
 from ..session_timeline import build_timeline
@@ -45,6 +50,8 @@ REVIEW_KIND = 'clinician_review'
 REVIEW_SCHEMA_VERSION = 1
 VERDICTS = frozenset({'confirmed', 'not_seen', 'unsure'})
 MAX_NOTE_LENGTH = 500
+LABELS_NAME = 'ground_truth_labels.json'
+LABELS_KIND = 'ground_truth_labels'
 THUMBNAIL_WIDTH = 320
 # Where the library card's still frame is taken, as a fraction of the session (past any dark opening).
 THUMBNAIL_AT = 0.15
@@ -165,6 +172,8 @@ def review_payload(scenario):
         'entries': timeline['entries'], 'groups': timeline['groups'],
         'measures': session_measures({name: document for name, (document, _) in channels.items()},
                                      decoded) if channels else None,
+        'hints': recording_hints({name: channel_summary(name, document, decoded)
+                                  for name, (document, _) in channels.items() if name != 'context'}),
         'binding': {'source_sha256': scenario._digest,
                     'channels': {name: sha for name, (_, sha) in sorted(channels.items())}},
     }
@@ -188,6 +197,29 @@ def read_clinician_review(path, binding, moment_ids):
         return {}
     return {key: mark for key, mark in document['moments'].items()
             if key in moment_ids and _valid_mark(mark)}
+
+
+def _channel_documents(scenario):
+    return {name: json.loads(path.read_bytes().decode('utf-8'))
+            for name, path in scenario._channel_files.items()}
+
+
+def read_labels(path, source_sha256, points):
+    """Stored labels for this exact video, by time key ('5.0'); {} if none or another video."""
+    try:
+        document = json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+    if (not isinstance(document, dict) or document.get('kind') != LABELS_KIND
+            or document.get('schema_version') != 1 or document.get('source_sha256') != source_sha256
+            or not isinstance(document.get('labels'), dict)):
+        return {}
+    keys = {f'{point:.1f}' for point in points}
+    return {key: {'posture': value.get('posture'), 'area': value.get('area')}
+            for key, value in document['labels'].items()
+            if key in keys and isinstance(value, dict)
+            and value.get('posture') in POSTURE_LABELS + (None,)
+            and value.get('area') in AREA_LABELS + (None,)}
 
 
 def thumbnail_jpeg(video, at_seconds, width=THUMBNAIL_WIDTH):
@@ -314,6 +346,67 @@ class SessionLibrary:
         if payload['measures'] is None:
             raise ValueError('no_measures')
         return (intervals_csv if kind == 'intervals' else episodes_csv)(payload['measures'])
+
+    def _has_area(self, session):
+        orientation = _channel_documents(session).get('orientation')
+        return bool(orientation and orientation.get('schema_version') == 2)
+
+    def labels(self, session_id):
+        """Label points, the labels so far and how the readings score against them."""
+        session, payload = self._payload(session_id)
+        points = label_points(payload['decoded_seconds'])
+        labels = ({} if session.folder is None
+                  else read_labels(session.folder / LABELS_NAME, session._digest, points))
+        documents = _channel_documents(session)
+        return {'interval': LABEL_INTERVAL, 'points': points, 'labels': labels,
+                'area': self._has_area(session), 'posture': 'posture' in documents,
+                'accuracy': label_accuracy({float(key): value for key, value in labels.items()}, documents)}
+
+    def set_label(self, session_id, time, posture, area):
+        """Store (or clear, with both None) the labels for one point in time."""
+        session, payload = self._payload(session_id)
+        if session.folder is None:
+            raise ValueError('review_not_stored')
+        points = label_points(payload['decoded_seconds'])
+        key = f'{time:.1f}'
+        if key not in {f'{point:.1f}' for point in points}:
+            raise ValueError('invalid_label_time')
+        if posture not in POSTURE_LABELS + (None,) or area not in AREA_LABELS + (None,):
+            raise ValueError('invalid_label')
+        if area is not None and not self._has_area(session):
+            raise ValueError('no_work_area')
+        with self._review_lock:
+            labels = read_labels(session.folder / LABELS_NAME, session._digest, points)
+            if posture is None and area is None:
+                labels.pop(key, None)
+            else:
+                labels[key] = {'posture': posture, 'area': area}
+            document = {'kind': LABELS_KIND, 'schema_version': 1, 'session_id': session_id,
+                        'source_sha256': session._digest, 'interval': LABEL_INTERVAL,
+                        'labels': dict(sorted(labels.items(), key=lambda item: float(item[0])))}
+            path = session.folder / LABELS_NAME
+            partial = path.with_suffix('.partial')
+            partial.write_text(json.dumps(document, ensure_ascii=False, indent=1), encoding='utf-8')
+            os.replace(partial, path)
+        return self.labels(session_id)
+
+    def accuracy_overview(self):
+        """Label scores and doctor verdicts summed over every session in the library."""
+        with self._lock:
+            sessions = list(self._sessions.values())
+        scores, verdicts, labeled_sessions = {}, {}, 0
+        for session in sessions:
+            labels = self.labels(session.id)
+            if labels['labels']:
+                labeled_sessions += 1
+                merge_scores(scores, labels['accuracy'])
+            review = self.review(session.id)
+            for kind, row in verdict_counts(review['entries'], review['groups'], review['clinician']).items():
+                total = verdicts.setdefault(kind, {'confirmed': 0, 'not_seen': 0, 'unsure': 0})
+                for verdict, count in row.items():
+                    total[verdict] += count
+        return {'sessions': len(sessions), 'labeled_sessions': labeled_sessions,
+                'labels': scores, 'verdicts': verdicts}
 
     def thumbnail(self, session_id):
         """A small still of the session's video for the library list (kept in memory)."""

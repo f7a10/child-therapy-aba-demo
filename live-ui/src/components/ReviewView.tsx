@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { motion } from "motion/react";
-import { Activity, ArrowLeft, Compass, FileText, MessageSquareText, PersonStanding } from "lucide-react";
+import { Activity, ArrowLeft, ClipboardCheck, Compass, FileText, MessageSquareText, PersonStanding } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { library } from "../lib/api";
 import { formatClock, formatLength } from "../lib/format";
@@ -10,6 +10,7 @@ import { groupEntries } from "../lib/grouping";
 import { CHANNELS, type ChannelEntry, type ChannelName, type ClinicianMark, type ReviewPayload, type Verdict } from "../lib/types";
 import { ReviewTimeline } from "./ReviewTimeline";
 import { SessionStrip } from "./SessionStrip";
+import { RecordingCheck } from "./GuideView";
 import { SessionSummaryCard } from "./SessionSummary";
 import { Button, Card, SectionTitle, cx } from "./ui";
 
@@ -23,7 +24,12 @@ const ICON: Record<ChannelName, LucideIcon> = {
 const LEAD_IN_S = 2;
 
 /** Review of one analysed session: its video, the channel lanes and the moments. */
-export function ReviewView({ sessionId, onHome, onReport }: { sessionId: string; onHome: () => void; onReport: () => void }) {
+export function ReviewView({ sessionId, onHome, onReport, onLabel }: {
+  sessionId: string;
+  onHome: () => void;
+  onReport: () => void;
+  onLabel: () => void;
+}) {
   const { s, language } = useI18n();
   const [review, setReview] = useState<ReviewPayload | null>(null);
   const [failed, setFailed] = useState(false);
@@ -111,6 +117,9 @@ export function ReviewView({ sessionId, onHome, onReport }: { sessionId: string;
                   <Fact label={s.review.childConfirmed} value={`${Math.round(review.child_confirmed_fraction * 100)}%`} />
                 )}
               </dl>
+              <Button onClick={onLabel} icon={<ClipboardCheck className="size-4" aria-hidden />}>
+                {s.accuracy.open}
+              </Button>
               <Button onClick={onReport} icon={<FileText className="size-4" aria-hidden />}>
                 {s.verdict.report}
               </Button>
@@ -166,6 +175,9 @@ export function ReviewView({ sessionId, onHome, onReport }: { sessionId: string;
           {review.measures && (
             <Card className="mt-6">
               <SessionSummaryCard title={s.measures.title} measures={review.measures} sessionId={review.id} onSeek={watch} />
+              <div className="px-5 pb-5">
+                <RecordingCheck hints={review.hints} />
+              </div>
             </Card>
           )}
 

@@ -3,6 +3,8 @@ import { AnimatePresence, MotionConfig } from "motion/react";
 import { AnalysisView } from "./components/AnalysisView";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { Home } from "./components/Home";
+import { GuideView } from "./components/GuideView";
+import { LabelView } from "./components/LabelView";
 import { ReportView } from "./components/ReportView";
 import { ReviewView } from "./components/ReviewView";
 import { TopBar } from "./components/TopBar";
@@ -11,11 +13,13 @@ import { useI18n } from "./lib/i18n";
 import { useLiveSession } from "./lib/useLiveSession";
 
 /** Pages: home, one analysis in progress, or the review of an analysed session. */
-type Route = { page: "home" } | { page: "analysis" | "review" | "report"; id: string };
+type Page = "analysis" | "review" | "report" | "label";
+type Route = { page: "home" } | { page: "guide" } | { page: Page; id: string };
 
 function readRoute(): Route {
-  const match = /^#\/(analysis|review|report)\/([\w-]{1,80})$/.exec(window.location.hash);
-  return match ? { page: match[1] as "analysis" | "review" | "report", id: match[2]! } : { page: "home" };
+  if (window.location.hash === "#/guide") return { page: "guide" };
+  const match = /^#\/(analysis|review|report|label)\/([\w-]{1,80})$/.exec(window.location.hash);
+  return match ? { page: match[1] as Page, id: match[2]! } : { page: "home" };
 }
 
 export default function App() {
@@ -31,7 +35,7 @@ export default function App() {
   }, []);
 
   const go = useCallback((next: Route) => {
-    window.location.hash = next.page === "home" ? "" : `#/${next.page}/${next.id}`;
+    window.location.hash = next.page === "home" ? "" : next.page === "guide" ? "#/guide" : `#/${next.page}/${next.id}`;
     setRoute(next);
   }, []);
 
@@ -83,7 +87,12 @@ export default function App() {
                 sessionId={route.id}
                 onHome={() => go({ page: "home" })}
                 onReport={() => go({ page: "report", id: route.id })}
+                onLabel={() => go({ page: "label", id: route.id })}
               />
+            ) : route.page === "label" ? (
+              <LabelView key={`label-${route.id}`} sessionId={route.id} onBack={() => go({ page: "review", id: route.id })} />
+            ) : route.page === "guide" ? (
+              <GuideView key="guide" onBack={() => go({ page: "home" })} />
             ) : route.page === "report" ? (
               <ReportView key={`report-${route.id}`} sessionId={route.id} onBack={() => go({ page: "review", id: route.id })} />
             ) : (
@@ -91,6 +100,7 @@ export default function App() {
                 key="home"
                 onAnalysis={(id) => go({ page: "analysis", id })}
                 onReview={(id) => go({ page: "review", id })}
+                onGuide={() => go({ page: "guide" })}
                 onScenario={live.startScenario}
                 creatingScenario={live.pending === "create"}
               />

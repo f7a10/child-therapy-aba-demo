@@ -247,6 +247,39 @@ export interface ReviewPayload {
   clinician: Record<string, ClinicianMark>;
   /** Episodes, summary and interval sheet (aba_demo/session_measures.py); null without channels. */
   measures: SessionMeasures | null;
+  /** Recording advice codes from this session's gap reasons. */
+  hints: string[];
+}
+
+export interface LabelScore {
+  labeled: number;
+  not_visible: number;
+  missed: number;
+  unverifiable: number;
+  measured: { count: number; correct: number };
+  inferred: { count: number; correct: number };
+  confusion: Record<string, Record<string, number>>;
+}
+
+export interface PointLabel {
+  posture: "sitting" | "standing" | "lying" | "not_visible" | null;
+  area: "at_area" | "away_from_area" | "not_visible" | null;
+}
+
+export interface LabelsState {
+  interval: number;
+  points: number[];
+  labels: Record<string, PointLabel>;
+  area: boolean;
+  posture: boolean;
+  accuracy: Partial<Record<"posture" | "area", LabelScore>>;
+}
+
+export interface AccuracyOverview {
+  sessions: number;
+  labeled_sessions: number;
+  labels: Partial<Record<"posture" | "area", LabelScore>>;
+  verdicts: Record<string, { confirmed: number; not_seen: number; unsure: number }>;
 }
 
 export interface Episode {

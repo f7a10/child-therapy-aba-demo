@@ -1,8 +1,11 @@
 import type {
   Activity,
   AnalysisStatus,
+  AccuracyOverview,
   ClinicianMark,
   Command,
+  LabelsState,
+  PointLabel,
   LibrarySession,
   ReviewPayload,
   Scenario,
@@ -53,6 +56,13 @@ export const library = {
   review: (id: string) => request<ReviewPayload>(`/api/library/${encodeURIComponent(id)}`),
   videoUrl: (id: string) => `/api/library/${encodeURIComponent(id)}/video`,
   thumbnailUrl: (id: string) => `/api/library/${encodeURIComponent(id)}/thumbnail`,
+  labels: (id: string) => request<LabelsState>(`/api/library/${encodeURIComponent(id)}/labels`),
+  setLabel: (id: string, time: number, label: PointLabel) =>
+    request<LabelsState>(`/api/library/${encodeURIComponent(id)}/labels/${time.toFixed(1)}`, {
+      method: "PUT",
+      body: JSON.stringify(label),
+    }),
+  accuracy: () => request<AccuracyOverview>("/api/library/accuracy"),
   exportUrl: (id: string, kind: "intervals" | "episodes") =>
     `/api/library/${encodeURIComponent(id)}/export/${kind}.csv`,
   mark: (id: string, momentId: string, verdict: Verdict | null, note = "") =>
