@@ -1,6 +1,6 @@
 # Pre-integration study: live-session site (Salih2369/ABA) × observation channels
 
-Status: study only, nothing merged. Clone at `C:/Users/Fahad/Downloads/aba-site`
+Status: study only, nothing merged. Studied in a local clone
 (own `.venv` and `live-ui/node_modules`; nothing installed in this repository).
 
 ## 1. What the site is

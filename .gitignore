@@ -57,3 +57,6 @@ context.json
 *.safetensors
 
 # An ignore rule is not a substitute for reviewing each staged file/history.
+
+# README screenshots (videos blurred) are the only images kept in the repository.
+!docs/images/*.jpg
