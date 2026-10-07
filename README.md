@@ -176,6 +176,11 @@ cd live-ui && npm test
 - منطقة العمل تتبع الكاميرا، لكن الحركة الكبيرة جداً للكاميرا قد تفقدها مؤقتاً (تظهر «غير مقاس»).
 - لا تعرّف على الهوية بين الجلسات، ولا تحليل مباشر من كاميرا حيّة.
 
+## الفريق
+
+- **فهد** — [@f7a10](https://github.com/f7a10)
+- **صالح** — [@Salih2369](https://github.com/Salih2369)
+
 ---
 
 <a id="english"></a>
@@ -213,3 +218,5 @@ folder, outside the repository.
 
 Earlier components (the precomputed replay dashboard `python -m aba_demo.server`, the Colab notebook
 in `notebooks/`) are still included; see [LIVE_WORKSTREAM.md](LIVE_WORKSTREAM.md) for the history.
+
+**Team:** Fahad ([@f7a10](https://github.com/f7a10)) and Saleh ([@Salih2369](https://github.com/Salih2369)).
